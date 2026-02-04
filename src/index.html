@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Calculadora VAEBA - PPSP-NR</title>
+    <title>Calculadora VAEBA e COTA - PPSP-NR</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -11,8 +11,8 @@
       <header class="app-header">
         <div>
           <p class="eyebrow">Calculadora Atuarial</p>
-          <h1>VAEBA (Reserva Matemática Individual) • PPSP-NR</h1>
-          <p class="subtitle">Simulador offline e exclusivo para participantes não repactuados.</p>
+          <h1>VAEBA e COTA (Simulação Patrimonial) • PPSP-NR</h1>
+          <p class="subtitle">Simulador atuarial para participantes não repactuados.</p>
         </div>
         <div class="header-actions">
           <button class="ghost" id="reset-btn">Limpar / Reset</button>
@@ -28,6 +28,13 @@
               <p>Preencha os campos obrigatórios para o cálculo.</p>
             </div>
             <div class="card-body">
+              <div class="field">
+                <label for="modo-calculo">Modo de cálculo</label>
+                <select id="modo-calculo">
+                  <option value="vaeba">VAEBA (RM Individual — passivo atuarial)</option>
+                  <option value="cota">COTA (Simulação de patrimônio individual — contribuições capitalizadas)</option>
+                </select>
+              </div>
               <div class="field">
                 <label for="nome">Nome</label>
                 <input id="nome" type="text" placeholder="Nome completo" />
@@ -65,7 +72,7 @@
             </div>
           </div>
 
-          <div class="card">
+          <div class="card" data-mode="vaeba">
             <div class="card-header">
               <h2>Benefício e Rubricas</h2>
               <p>Valores em moeda com máscara pt-BR.</p>
@@ -105,7 +112,7 @@
             </div>
           </div>
 
-          <div class="card">
+          <div class="card" data-mode="vaeba">
             <div class="card-header">
               <h2>Premissas do Plano</h2>
               <p>Parâmetros fixos do PPSP-NR.</p>
@@ -137,6 +144,130 @@
               </div>
             </div>
           </div>
+
+          <div class="card" data-mode="cota">
+            <div class="card-header">
+              <h2>Documentos (Contribuições)</h2>
+              <p>Envie o PDF do “Levantamento de Contribuições Normais e Joia”.</p>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="cota-pdf">Upload do PDF</label>
+                <input id="cota-pdf" type="file" accept="application/pdf" />
+                <small>O parser tenta identificar competências, valores mensais e 13º.</small>
+              </div>
+              <div class="field">
+                <label for="cota-pdf-status">Status da leitura</label>
+                <div id="cota-pdf-status" class="readout">Nenhum arquivo carregado.</div>
+              </div>
+              <div class="field">
+                <label for="cota-manual-text">Modo assistido (colar texto)</label>
+                <textarea id="cota-manual-text" rows="4" placeholder="Cole o texto do PDF aqui para tentar a leitura manual."></textarea>
+                <small>Se a leitura automática falhar, use este modo. OCR não está disponível localmente.</small>
+                <button class="ghost" id="cota-parse-manual">Tentar leitura do texto colado</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" data-mode="cota">
+            <div class="card-header">
+              <h2>Dados/ajustes de contribuições</h2>
+              <div class="actions">
+                <button class="ghost" id="cota-add-row">Adicionar linha</button>
+                <button class="primary" id="cota-recalc">Recalcular tabela</button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="table-wrapper">
+                <table class="contrib-table">
+                  <thead>
+                    <tr>
+                      <th>Competência</th>
+                      <th>Tipo</th>
+                      <th>13º</th>
+                      <th>Valor nominal</th>
+                      <th>Valor BRL</th>
+                      <th>FATCOR</th>
+                      <th>FJUR</th>
+                      <th>Atualizado</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="cota-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" data-mode="cota">
+            <div class="card-header">
+              <h2>Parâmetros da simulação</h2>
+              <p>Premissas fixas e ajustes mínimos para a COTA.</p>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="cota-data-inicial">Data inicial para acumulação (opcional)</label>
+                <input id="cota-data-inicial" type="month" />
+                <small>Se vazio, será usada a 1ª competência do extrato.</small>
+              </div>
+              <div class="field">
+                <label for="cota-regra-patro">Regra de contribuição da patrocinadora</label>
+                <select id="cota-regra-patro">
+                  <option value="A">Usar valores extraídos do documento (se houver colunas separadas)</option>
+                  <option value="B">Patrocinadora = Participante (1:1)</option>
+                  <option value="C">Patrocinadora = Participante × fator</option>
+                  <option value="D">Informar patrocinadora manualmente</option>
+                </select>
+              </div>
+              <div class="field" id="cota-patro-factor-field">
+                <label for="cota-patro-factor">Fator patrocinadora</label>
+                <input id="cota-patro-factor" type="number" min="0" step="0.01" value="1" />
+              </div>
+              <div class="field">
+                <label>Incluir tipos</label>
+                <div class="checkbox-list">
+                  <label class="checkbox">
+                    <input type="checkbox" id="cota-include-participante" checked />
+                    Contribuições normais do participante
+                  </label>
+                  <label class="checkbox">
+                    <input type="checkbox" id="cota-include-patrocinadora" checked />
+                    Contribuições normais da patrocinadora
+                  </label>
+                  <label class="checkbox">
+                    <input type="checkbox" id="cota-include-joia" checked />
+                    Joia
+                  </label>
+                  <label class="checkbox">
+                    <input type="checkbox" id="cota-include-peculio" checked />
+                    Pecúlio
+                  </label>
+                  <label class="checkbox">
+                    <input type="checkbox" id="cota-include-outros" checked />
+                    Outras rubricas
+                  </label>
+                </div>
+              </div>
+              <div class="card-body readonly">
+                <div class="readonly-row">
+                  <span>Índice de correção</span>
+                  <strong>INPC (1994-01 a 2025-11)</strong>
+                </div>
+                <div class="readonly-row">
+                  <span>Taxa real anual</span>
+                  <strong>4,44% a.a.</strong>
+                </div>
+                <div class="readonly-row">
+                  <span>Capitalização</span>
+                  <strong>(1 + i) ^ (dias/365,25)</strong>
+                </div>
+                <div class="readonly-row">
+                  <span>Conversão pré-Real</span>
+                  <strong>Moedas históricas → CR$ → BRL / 2.750</strong>
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="column">
@@ -146,7 +277,7 @@
               <p>Valores calculados com base nas premissas do PPSP-NR.</p>
             </div>
             <div class="card-body">
-              <div class="result-grid">
+              <div class="result-grid" data-mode="vaeba">
                 <div>
                   <p class="label">FATCOR</p>
                   <p class="value" id="fatcor">—</p>
@@ -164,7 +295,7 @@
                   <p class="value" id="sup-ajustado">—</p>
                 </div>
               </div>
-              <div class="result-highlight">
+              <div class="result-highlight" data-mode="vaeba">
                 <div>
                   <p class="label">VAEBA Bruta</p>
                   <p class="value" id="vaeba-bruta">—</p>
@@ -172,6 +303,46 @@
                 <div>
                   <p class="label">VAEBA Ajustada</p>
                   <p class="value" id="vaeba-ajustada">—</p>
+                </div>
+              </div>
+              <div class="result-grid" data-mode="cota">
+                <div>
+                  <p class="label">COTA Total (BRL)</p>
+                  <p class="value" id="cota-total">—</p>
+                </div>
+                <div>
+                  <p class="label">Total nominal (BRL)</p>
+                  <p class="value" id="cota-nominal">—</p>
+                </div>
+                <div>
+                  <p class="label">Total corrigido (INPC)</p>
+                  <p class="value" id="cota-inpc">—</p>
+                </div>
+                <div>
+                  <p class="label">Total capitalizado</p>
+                  <p class="value" id="cota-capitalizado">—</p>
+                </div>
+                <div>
+                  <p class="label">Competência inicial</p>
+                  <p class="value" id="cota-competencia-inicial">—</p>
+                </div>
+                <div>
+                  <p class="label">Competência final</p>
+                  <p class="value" id="cota-competencia-final">—</p>
+                </div>
+                <div>
+                  <p class="label">Competências processadas</p>
+                  <p class="value" id="cota-competencias-qt">—</p>
+                </div>
+                <div>
+                  <p class="label">Benefício equivalente (estimativo)</p>
+                  <p class="value" id="cota-beneficio-equivalente">—</p>
+                </div>
+              </div>
+              <div class="result-highlight" data-mode="cota">
+                <div>
+                  <p class="label">Totais por tipo</p>
+                  <div id="cota-totais" class="totals-list">—</div>
                 </div>
               </div>
               <div id="alertas" class="alertas"></div>
