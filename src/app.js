@@ -147,6 +147,13 @@ const parseCurrency = (value) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const parseBrazilianNumber = (value) => {
+  if (!value) return 0;
+  const normalized = value.toString().replace(/\s/g, '').replace(/\./g, '').replace(/,/g, '.');
+  const parsed = Number.parseFloat(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
 const formatCurrencyInput = (raw) => {
   const digits = raw.replace(/\D/g, '').padStart(3, '0');
   const integerPart = digits.slice(0, -2).replace(/^0+(?=\d)/, '') || '0';
