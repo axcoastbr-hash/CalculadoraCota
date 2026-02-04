@@ -275,6 +275,22 @@ small {
   overflow-x: auto;
 }
 
+.contracheque-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+
+.contracheque-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .contrib-table {
   width: 100%;
   border-collapse: collapse;

@@ -1,5 +1,11 @@
 import { INPC_INDEX, INPC_RANGE } from './data/inpc.js';
 import { QX_FEM, QX_MASC } from './data/mortality_at2000_suavizada.js';
+import {
+  classifyCode,
+  parseBrazilianNumber,
+  parseCompetenciaFromText,
+  parseContrachequeText
+} from './parser_contracheque.js';
 import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.mjs';
 const FALLBACK_INTEREST_RATES = {
   2021: 0.0437,
@@ -21,9 +27,12 @@ let interestRates = { ...FALLBACK_INTEREST_RATES };
 
 const CONTRIBUTION_TYPES = [
   { value: 'PARTICIPANTE_NORMAL', label: 'Participante (Normal)' },
+  { value: 'PARTICIPANTE_EXTRA', label: 'Participante (Extraordinária)' },
+  { value: 'PARTICIPANTE_PECULIO', label: 'Participante (Pecúlio)' },
   { value: 'PATROCINADORA_NORMAL', label: 'Patrocinadora (Normal)' },
+  { value: 'PATROCINADORA_EXTRA', label: 'Patrocinadora (Extraordinária)' },
+  { value: 'PATROCINADORA_PECULIO', label: 'Patrocinadora (Pecúlio)' },
   { value: 'JOIA', label: 'Joia' },
-  { value: 'PECULIO', label: 'Pecúlio' },
   { value: 'OUTROS', label: 'Outros' }
 ];
 
@@ -51,15 +60,17 @@ const inputs = {
     document.getElementById('rubrica-5')
   ],
   cotaDataInicial: document.getElementById('cota-data-inicial'),
-  cotaRegraPatro: document.getElementById('cota-regra-patro'),
-  cotaPatroFactor: document.getElementById('cota-patro-factor'),
+  cotaIncludeSponsor: document.getElementById('cota-include-sponsor'),
+  cotaSponsorNormal: document.getElementById('cota-sponsor-normal'),
+  cotaSponsorExtra: document.getElementById('cota-sponsor-extra'),
+  cotaSponsorPeculio: document.getElementById('cota-sponsor-peculio'),
   cotaIncludeParticipante: document.getElementById('cota-include-participante'),
   cotaIncludePatrocinadora: document.getElementById('cota-include-patrocinadora'),
   cotaIncludeJoia: document.getElementById('cota-include-joia'),
-  cotaIncludePeculio: document.getElementById('cota-include-peculio'),
   cotaIncludeOutros: document.getElementById('cota-include-outros'),
   cotaPdf: document.getElementById('cota-pdf'),
-  cotaManualText: document.getElementById('cota-manual-text')
+  cotaManualText: document.getElementById('cota-manual-text'),
+  cotaContrachequeUpload: document.getElementById('cota-contracheque-upload')
 };
 
 const outputs = {
@@ -96,7 +107,10 @@ const cotaParseManualButton = document.getElementById('cota-parse-manual');
 const cotaAddRowButton = document.getElementById('cota-add-row');
 const cotaRecalcButton = document.getElementById('cota-recalc');
 const cotaTableBody = document.getElementById('cota-table-body');
-const cotaPatroFactorField = document.getElementById('cota-patro-factor-field');
+const cotaContrachequeList = document.getElementById('cota-contracheque-list');
+const cotaContrachequePreview = document.getElementById('cota-contracheque-preview');
+const cotaContrachequeTotals = document.getElementById('cota-contracheque-totals');
+const cotaContrachequeApply = document.getElementById('cota-contracheque-apply');
 
 const formatCurrency = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -118,6 +132,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 let cotaEntries = [];
 let cotaIdCounter = 1;
 let currentMode = 'vaeba';
+let contrachequeImports = [];
+let contrachequeIdCounter = 1;
 
 const parseCurrency = (value) => {
   if (!value) return 0;
@@ -489,6 +505,19 @@ const runTests = () => {
     pass: Math.abs(cotaMetrics.fjur - 1) < 0.01
   });
 
+  testItems.push({
+    name: 'Parse valor PT-BR 2.224,78 -> 2224.78',
+    pass: Math.abs(parseBrazilianNumber('2.224,78') - 2224.78) < 0.001
+  });
+  testItems.push({
+    name: 'Parse competência "JANEIRO/2022" -> 2022-01',
+    pass: parseCompetenciaFromText('JANEIRO/2022') === '2022-01'
+  });
+  testItems.push({
+    name: 'Classificação de código 6060 -> EXTRA',
+    pass: classifyCode(6060) === 'EXTRA'
+  });
+
   outputs.tests.innerHTML = '';
   testItems.forEach((test) => {
     const li = document.createElement('li');
@@ -516,13 +545,24 @@ const createCotaEntry = (entry) => ({
   notes: entry.notes ?? ''
 });
 
-const getCotaFilters = () => ({
-  PARTICIPANTE_NORMAL: inputs.cotaIncludeParticipante.checked,
-  PATROCINADORA_NORMAL: inputs.cotaIncludePatrocinadora.checked,
-  JOIA: inputs.cotaIncludeJoia.checked,
-  PECULIO: inputs.cotaIncludePeculio.checked,
-  OUTROS: inputs.cotaIncludeOutros.checked
-});
+const getTypeCategory = (type) => {
+  if (['PARTICIPANTE_NORMAL', 'PARTICIPANTE_EXTRA', 'PARTICIPANTE_PECULIO', 'PECULIO'].includes(type)) {
+    return 'participante';
+  }
+  if (['PATROCINADORA_NORMAL', 'PATROCINADORA_EXTRA', 'PATROCINADORA_PECULIO'].includes(type)) {
+    return 'patrocinadora';
+  }
+  if (type === 'JOIA') return 'joia';
+  return 'outros';
+};
+
+const isEntryIncluded = (entry) => {
+  const category = getTypeCategory(entry.type);
+  if (category === 'participante') return inputs.cotaIncludeParticipante.checked;
+  if (category === 'patrocinadora') return inputs.cotaIncludePatrocinadora.checked;
+  if (category === 'joia') return inputs.cotaIncludeJoia.checked;
+  return inputs.cotaIncludeOutros.checked;
+};
 
 const getCotaFinalCompetence = (dataCalculo) => {
   if (!dataCalculo) return null;
@@ -531,23 +571,41 @@ const getCotaFinalCompetence = (dataCalculo) => {
   return `${date.getFullYear()}-${month}`;
 };
 
-const applyPatrocinadoraRule = (entries, rule, factor) => {
-  if (rule === 'A' || rule === 'D') return entries;
-  const sanitizedFactor = Number.isFinite(factor) ? factor : 1;
-  const baseEntries = entries.filter((entry) => entry.type !== 'PATROCINADORA_NORMAL');
-  const derived = baseEntries
-    .filter((entry) => entry.type === 'PARTICIPANTE_NORMAL')
-    .map((entry) =>
-      createCotaEntry({
-        competence: entry.competence,
-        type: 'PATROCINADORA_NORMAL',
-        amountNominal: entry.amountNominal * (rule === 'B' ? 1 : sanitizedFactor),
-        is13: entry.is13,
-        source: 'regra',
-        notes: `Gerado pela regra ${rule}`
-      })
-    );
-  return [...baseEntries, ...derived];
+const buildSponsorEntries = (entries, factors, includeSponsor) => {
+  if (!includeSponsor) return [];
+  const totalsByCompetence = entries.reduce((acc, entry) => {
+    if (!entry.competence) return acc;
+    const key = entry.competence;
+    acc[key] = acc[key] || { normal: 0, extra: 0, peculio: 0 };
+    if (entry.type === 'PARTICIPANTE_NORMAL') acc[key].normal += entry.amountNominal;
+    if (entry.type === 'PARTICIPANTE_EXTRA') acc[key].extra += entry.amountNominal;
+    if (entry.type === 'PARTICIPANTE_PECULIO' || entry.type === 'PECULIO') acc[key].peculio += entry.amountNominal;
+    return acc;
+  }, {});
+
+  return Object.entries(totalsByCompetence).flatMap(([competence, totals]) => [
+    createCotaEntry({
+      competence,
+      type: 'PATROCINADORA_NORMAL',
+      amountNominal: totals.normal * factors.normal,
+      source: 'estimativa',
+      notes: `Patrocinadora estimada (normal) x${factors.normal}`
+    }),
+    createCotaEntry({
+      competence,
+      type: 'PATROCINADORA_EXTRA',
+      amountNominal: totals.extra * factors.extra,
+      source: 'estimativa',
+      notes: `Patrocinadora estimada (extra) x${factors.extra}`
+    }),
+    createCotaEntry({
+      competence,
+      type: 'PATROCINADORA_PECULIO',
+      amountNominal: totals.peculio * factors.peculio,
+      source: 'estimativa',
+      notes: `Patrocinadora estimada (pecúlio) x${factors.peculio}`
+    })
+  ]);
 };
 
 const computeCotaEntryMetrics = (entry, { dataCalculo, competenciaFinal, warnings }) => {
@@ -631,7 +689,9 @@ const renderCotaTable = (dataCalculo) => {
 
 const getCotaTypeLabel = (type) => {
   const found = CONTRIBUTION_TYPES.find((item) => item.value === type);
-  return found ? found.label : type;
+  if (found) return found.label;
+  if (type === 'PECULIO') return 'Participante (Pecúlio)';
+  return type;
 };
 
 const buildCotaAudit = (data) => {
@@ -648,13 +708,29 @@ Parâmetros:
 INPC: série 1994-01..2025-11
 Taxa real anual: ${formatPercent(COTA_REAL_RATE)}
 Capitalização: (1+i)^(dias/365,25)
-Regra patrocinadora: ${data.regraPatro}
+Patrocinadora incluída: ${data.sponsorIncluded ? 'Sim' : 'Não'}
+Fatores patrocinadora: normal ${formatNumber(data.sponsorFactors.normal, 2)}, extra ${formatNumber(
+    data.sponsorFactors.extra,
+    2
+  )}, pecúlio ${formatNumber(data.sponsorFactors.peculio, 2)}
 Política pré-Real: conversão para BRL via CR$ e divisão por 2.750
 
 Totais:
 Total nominal (BRL): ${formatCurrency.format(data.totalNominal)}
 Total corrigido (INPC): ${formatCurrency.format(data.totalCorrigido)}
 COTA total (INPC + juros): ${formatCurrency.format(data.totalCapitalizado)}
+Total participante: ${formatCurrency.format(data.totalByParty.participante)}
+Total patrocinadora: ${formatCurrency.format(data.totalByParty.patrocinadora)}
+
+Contracheques importados:
+${data.contracheques.length ? data.contracheques
+    .map(
+      (item) =>
+        `- ${item.fileName} | competência ${item.competencia || '—'} | fonte ${item.fonte}${
+          item.duplicated ? ' | duplicado' : ''
+        }`
+    )
+    .join('\n') : '- Nenhum contracheque importado.'}
 
 Detalhamento por lançamento:
 Competência | Tipo | Nominal | Moeda | Fator conversão | BRL | INPC base | INPC final | FATCOR | t (anos) | FJUR | Atualizado`;
@@ -675,11 +751,21 @@ Competência | Tipo | Nominal | Moeda | Fator conversão | BRL | INPC base | INP
     ([type, value]) => `- ${getCotaTypeLabel(type)}: ${formatCurrency.format(value)}`
   );
 
+  const totalsByCompetenceLines = Object.entries(data.competenceSummary).map(
+    ([competence, values]) =>
+      `- ${competence}: participante ${formatCurrency.format(values.participante)} | patrocinadora ${formatCurrency.format(
+        values.patrocinadora
+      )} | total ${formatCurrency.format(values.total)}`
+  );
+
   return `${header}
 ${lines.join('\n')}
 
 Totais por tipo:
 ${totalsByTypeLines.join('\n')}
+
+Totais por competência (participante + patrocinadora):
+${totalsByCompetenceLines.join('\n') || '- Nenhuma competência.'}
 
 Avisos:
 ${data.warnings.length ? data.warnings.map((warning) => `- ${warning}`).join('\n') : '- Nenhum aviso.'}
@@ -692,16 +778,29 @@ const buildCotaParecer = (data) => `PARECER TÉCNICO RESUMIDO — SIMULAÇÃO DE
 Estimar o patrimônio individual gerado por contribuições do participante e patrocinadora (incluindo joia e demais rubricas), atualizado pelo INPC e capitalizado à taxa real anual, para fins de quantificação patrimonial.
 
 2. BASE DOCUMENTAL E DADOS UTILIZADOS
-Contribuições extraídas do “Levantamento de Contribuições Normais e Joia” (PDF) e/ou entradas manuais. Competências de ${data.competenciaInicial || '—'} a ${data.competenciaFinal || '—'}.
+Contribuições extraídas do “Levantamento de Contribuições Normais e Joia” (PDF), contracheques importados e/ou entradas manuais. Competências de ${data.competenciaInicial || '—'} a ${data.competenciaFinal || '—'}. Contracheques analisados: ${
+  data.contracheques.length
+    ? data.contracheques.map((item) => `${item.fileName} (${item.competencia || '—'})`).join(', ')
+    : 'nenhum'
+}.
 
 3. METODOLOGIA E PREMISSAS
-Correção monetária via INPC (FATCOR = índice final/índice base) e capitalização real de 4,44% a.a. (1+i)^t. Conversão pré-Plano Real conforme cadeia oficial de moedas até CR$ e BRL (divisão por 2.750). Regra de patrocinadora aplicada: ${data.regraPatro}.
+Correção monetária via INPC (FATCOR = índice final/índice base) e capitalização real de 4,44% a.a. (1+i)^t. Conversão pré-Plano Real conforme cadeia oficial de moedas até CR$ e BRL (divisão por 2.750). Patrocinadora ${data.sponsorIncluded ? 'incluída' : 'não incluída'} com fatores normal ${formatNumber(
+  data.sponsorFactors.normal,
+  2
+)}, extra ${formatNumber(data.sponsorFactors.extra, 2)} e pecúlio ${formatNumber(
+  data.sponsorFactors.peculio,
+  2
+)}.
 
 4. APURAÇÃO
 Competências processadas: ${data.competenciasProcessadas}.
 Totais por tipo: ${Object.entries(data.totalByType)
   .map(([type, value]) => `${getCotaTypeLabel(type)} ${formatCurrency.format(value)}`)
   .join(' | ')}.
+Totais por parte: participante ${formatCurrency.format(data.totalByParty.participante)} | patrocinadora ${formatCurrency.format(
+  data.totalByParty.patrocinadora
+)}.
 
 5. RESULTADO
 COTA TOTAL (R$): ${formatCurrency.format(data.totalCapitalizado)}.
@@ -747,23 +846,31 @@ const calculateCota = () => {
     errors.push('Competência final não pode ser anterior à inicial.');
   }
 
-  const regraPatro = inputs.cotaRegraPatro.value;
-  const fatorPatro = Number(inputs.cotaPatroFactor.value);
-  if (regraPatro === 'C' && (!Number.isFinite(fatorPatro) || fatorPatro < 0)) {
-    errors.push('Fator da patrocinadora inválido.');
+  const sponsorFactors = {
+    normal: Number(inputs.cotaSponsorNormal.value),
+    extra: Number(inputs.cotaSponsorExtra.value),
+    peculio: Number(inputs.cotaSponsorPeculio.value)
+  };
+
+  if (Object.values(sponsorFactors).some((factor) => Number.isNaN(factor) || factor < 0)) {
+    errors.push('Fatores da patrocinadora inválidos.');
   }
 
-  const filters = getCotaFilters();
-  const baseEntries = applyPatrocinadoraRule(cotaEntries, regraPatro, fatorPatro).filter(
-    (entry) => filters[entry.type]
-  );
-
-  const entries = baseEntries.filter(
+  const participantEntries = cotaEntries.filter(
     (entry) =>
       entry.competence &&
       entry.competence >= competenciaInicial &&
-      entry.competence <= competenciaFinal
+      entry.competence <= competenciaFinal &&
+      isEntryIncluded(entry)
   );
+
+  const sponsorEntries = buildSponsorEntries(
+    participantEntries.filter((entry) => getTypeCategory(entry.type) === 'participante'),
+    sponsorFactors,
+    inputs.cotaIncludeSponsor.checked && inputs.cotaIncludePatrocinadora.checked
+  );
+
+  const entries = [...participantEntries, ...sponsorEntries];
 
   if (!entries.length) {
     errors.push('Nenhuma contribuição válida dentro do intervalo selecionado.');
@@ -790,6 +897,30 @@ const calculateCota = () => {
   const totalCapitalizado = computedEntries.reduce((sum, entry) => sum + entry.updated, 0);
   const totalByType = computedEntries.reduce((acc, entry) => {
     acc[entry.type] = (acc[entry.type] || 0) + entry.updated;
+    return acc;
+  }, {});
+
+  const totalByParty = computedEntries.reduce(
+    (acc, entry) => {
+      const category = getTypeCategory(entry.type);
+      if (category === 'participante') acc.participante += entry.updated;
+      if (category === 'patrocinadora') acc.patrocinadora += entry.updated;
+      return acc;
+    },
+    { participante: 0, patrocinadora: 0 }
+  );
+
+  const competenceSummary = computedEntries.reduce((acc, entry) => {
+    if (!entry.competence) return acc;
+    acc[entry.competence] = acc[entry.competence] || {
+      participante: 0,
+      patrocinadora: 0,
+      total: 0
+    };
+    const category = getTypeCategory(entry.type);
+    if (category === 'participante') acc[entry.competence].participante += entry.updated;
+    if (category === 'patrocinadora') acc[entry.competence].patrocinadora += entry.updated;
+    acc[entry.competence].total += entry.updated;
     return acc;
   }, {});
 
@@ -820,15 +951,19 @@ const calculateCota = () => {
     dataCalculo,
     competenciaInicial: formatCompetenciaKey(competenciaInicial),
     competenciaFinal: formatCompetenciaKey(competenciaFinal),
-    regraPatro: inputs.cotaRegraPatro.options[inputs.cotaRegraPatro.selectedIndex].text,
+    sponsorIncluded: inputs.cotaIncludeSponsor.checked,
+    sponsorFactors,
     totalNominal,
     totalCorrigido,
     totalCapitalizado,
     totalByType,
+    totalByParty,
+    competenceSummary,
     entries: computedEntries,
     warnings,
     competenciasProcessadas: computedEntries.length,
-    beneficioEquivalente
+    beneficioEquivalente,
+    contracheques: contrachequeImports
   };
 
   outputs.auditoria.textContent = buildCotaAudit(auditData);
@@ -892,8 +1027,7 @@ const detectMonthColumns = (lines) => {
 const inferLineType = (text) => {
   const upper = text.toUpperCase();
   if (upper.includes('JOIA')) return 'JOIA';
-  if (upper.includes('PECULIO') || upper.includes('PECÚLIO')) return 'PECULIO';
-  if (upper.includes('PATROCINADORA')) return 'PATROCINADORA_NORMAL';
+  if (upper.includes('PECULIO') || upper.includes('PECÚLIO')) return 'PARTICIPANTE_PECULIO';
   return 'PARTICIPANTE_NORMAL';
 };
 
@@ -986,6 +1120,177 @@ const parseManualTextContributions = (text) => {
       });
     });
   return entries;
+};
+
+const parseContrachequePdf = async (file) => {
+  const data = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const pages = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items.map((item) => item.str).join(' ');
+    pages.push(pageText);
+  }
+  const fullText = pages.join('\n');
+  return parseContrachequeText(fullText);
+};
+
+const buildContrachequeSummary = (imports) => {
+  const totals = imports.reduce((acc, item) => {
+    const competence = item.competencia || '—';
+    acc[competence] = acc[competence] || { normal: 0, extra: 0, peculio: 0, total: 0 };
+    item.itens.forEach((it) => {
+      if (it.tipo === 'NORMAL') acc[competence].normal += it.valor;
+      if (it.tipo === 'EXTRA') acc[competence].extra += it.valor;
+      if (it.tipo === 'PECULIO') acc[competence].peculio += it.valor;
+      acc[competence].total += it.valor;
+    });
+    return acc;
+  }, {});
+
+  return totals;
+};
+
+const renderContrachequeList = () => {
+  if (!contrachequeImports.length) {
+    cotaContrachequeList.textContent = 'Nenhum arquivo importado.';
+    cotaContrachequePreview.innerHTML = '';
+    cotaContrachequeTotals.textContent = '—';
+    return;
+  }
+
+  cotaContrachequeList.innerHTML = contrachequeImports
+    .map((item) => {
+      const duplicateLabel = item.duplicated ? ' (duplicado)' : '';
+      const competenceValue = item.competencia || '';
+      return `
+        <div class="contracheque-row">
+          <strong>${item.fileName}</strong>${duplicateLabel} — fonte: ${item.fonte}
+          <div class="contracheque-meta">
+            Competência:
+            <input type="month" data-contracheque-id="${item.id}" value="${competenceValue}" />
+          </div>
+          ${item.warnings.length ? `<div class="alert">${item.warnings.join(' | ')}</div>` : ''}
+        </div>
+      `;
+    })
+    .join('');
+
+  const previewRows = contrachequeImports.flatMap((item) =>
+    item.itens.map(
+      (it) => `
+        <tr>
+          <td>${item.fileName}</td>
+          <td>${item.competencia || '—'}</td>
+          <td>${it.codigo}</td>
+          <td>${it.descricao}</td>
+          <td>${it.tipo}</td>
+          <td>${formatCurrency.format(it.valor)}</td>
+        </tr>
+      `
+    )
+  );
+  cotaContrachequePreview.innerHTML = previewRows.length
+    ? previewRows.join('')
+    : '<tr><td colspan="6">Nenhum item contributivo encontrado.</td></tr>';
+
+  const totals = buildContrachequeSummary(contrachequeImports);
+  const totalsLines = Object.entries(totals).map(
+    ([competence, values]) =>
+      `${competence}: normal ${formatNumber(values.normal, 2)}, extra ${formatNumber(
+        values.extra,
+        2
+      )}, pecúlio ${formatNumber(values.peculio, 2)} | total ${formatNumber(values.total, 2)}`
+  );
+  cotaContrachequeTotals.textContent = totalsLines.join('\n') || '—';
+};
+
+const handleContrachequeUpload = async (files) => {
+  if (!files?.length) return;
+  const newImports = [];
+  for (const file of files) {
+    try {
+      const parsed = await parseContrachequePdf(file);
+      const competencia = parsed.competencia;
+      const duplicated = competencia
+        ? contrachequeImports.some((item) => item.competencia === competencia)
+        : false;
+      newImports.push({
+        id: contrachequeIdCounter++,
+        fileName: file.name,
+        competencia,
+        itens: parsed.itens,
+        fonte: 'pdf-text',
+        warnings: parsed.warnings,
+        duplicated
+      });
+    } catch (error) {
+      newImports.push({
+        id: contrachequeIdCounter++,
+        fileName: file.name,
+        competencia: null,
+        itens: [],
+        fonte: 'pdf-text',
+        warnings: ['Falha ao ler o PDF.'],
+        duplicated: false
+      });
+    }
+  }
+  contrachequeImports = [...contrachequeImports, ...newImports];
+  renderContrachequeList();
+};
+
+const handleContrachequeListChange = (event) => {
+  const target = event.target;
+  if (!target?.dataset?.contrachequeId) return;
+  const id = Number(target.dataset.contrachequeId);
+  const item = contrachequeImports.find((entry) => entry.id === id);
+  if (!item) return;
+  item.competencia = target.value || null;
+  const duplicates = contrachequeImports.filter((entry) => entry.competencia === item.competencia);
+  duplicates.forEach((entry) => {
+    entry.duplicated = duplicates.length > 1 && !!entry.competencia;
+  });
+  renderContrachequeList();
+};
+
+const applyContrachequesToCota = () => {
+  if (!contrachequeImports.length) return;
+  const warnings = [];
+  const mergedEntries = [];
+  contrachequeImports.forEach((item) => {
+    if (!item.competencia) {
+      warnings.push(`Competência ausente no arquivo ${item.fileName}.`);
+      return;
+    }
+    item.itens.forEach((it) => {
+      const type =
+        it.tipo === 'NORMAL'
+          ? 'PARTICIPANTE_NORMAL'
+          : it.tipo === 'EXTRA'
+            ? 'PARTICIPANTE_EXTRA'
+            : 'PARTICIPANTE_PECULIO';
+      mergedEntries.push(
+        createCotaEntry({
+          competence: item.competencia,
+          type,
+          amountNominal: it.valor,
+          is13: it.descricao.includes('13'),
+          source: 'contracheque',
+          notes: `${item.fileName} (${item.fonte})`
+        })
+      );
+    });
+    if (item.duplicated) {
+      warnings.push(`Competência ${item.competencia} duplicada em contracheques.`);
+    }
+  });
+  cotaEntries = [...cotaEntries, ...mergedEntries];
+  renderCotaTable(inputs.dataCalculo.value);
+  if (warnings.length) {
+    renderAlerts(warnings);
+  }
 };
 
 const renderAlerts = (warnings) => {
@@ -1207,12 +1512,13 @@ const resetForm = () => {
       input.value = '';
     }
   });
-  inputs.cotaRegraPatro.value = 'A';
-  inputs.cotaPatroFactor.value = 1;
+  inputs.cotaIncludeSponsor.checked = true;
+  inputs.cotaSponsorNormal.value = 1;
+  inputs.cotaSponsorExtra.value = 1;
+  inputs.cotaSponsorPeculio.value = 0;
   inputs.cotaIncludeParticipante.checked = true;
   inputs.cotaIncludePatrocinadora.checked = true;
   inputs.cotaIncludeJoia.checked = true;
-  inputs.cotaIncludePeculio.checked = true;
   inputs.cotaIncludeOutros.checked = true;
   inputs.dataCalculo.value = getTodayISO();
   outputs.fatcor.textContent = '—';
@@ -1237,6 +1543,8 @@ const resetForm = () => {
   cotaEntries = [];
   cotaTableBody.innerHTML = '';
   cotaPdfStatus.textContent = 'Nenhum arquivo carregado.';
+  contrachequeImports = [];
+  renderContrachequeList();
 };
 
 const handleCopy = async (text) => {
@@ -1660,11 +1968,6 @@ const handleDownloadParecer = async () => {
   }
 };
 
-const updatePatroFactorVisibility = () => {
-  const show = inputs.cotaRegraPatro.value === 'C';
-  cotaPatroFactorField.classList.toggle('is-hidden', !show);
-};
-
 const updateCotaStatus = (message) => {
   cotaPdfStatus.textContent = message;
 };
@@ -1757,8 +2060,8 @@ const handleCotaTableClick = (event) => {
 inputs.dataCalculo.value = getTodayISO();
 setPdfWarning('');
 setMode(inputs.modo.value || 'vaeba');
-updatePatroFactorVisibility();
 renderCotaTable(inputs.dataCalculo.value);
+renderContrachequeList();
 
 resetButton.addEventListener('click', resetForm);
 calcButton.addEventListener('click', calculate);
@@ -1767,7 +2070,6 @@ copyParecerButton.addEventListener('click', () => handleCopy(outputs.parecer.tex
 downloadParecerButton.addEventListener('click', handleDownloadParecer);
 inputs.modo.addEventListener('change', (event) => setMode(event.target.value));
 inputs.dataCalculo.addEventListener('change', () => renderCotaTable(inputs.dataCalculo.value));
-inputs.cotaRegraPatro.addEventListener('change', updatePatroFactorVisibility);
 inputs.cotaPdf.addEventListener('change', (event) => handleCotaPdfUpload(event.target.files?.[0]));
 cotaParseManualButton.addEventListener('click', handleManualParse);
 cotaAddRowButton.addEventListener('click', addCotaRow);
@@ -1775,6 +2077,11 @@ cotaRecalcButton.addEventListener('click', () => renderCotaTable(inputs.dataCalc
 cotaTableBody.addEventListener('input', handleCotaTableInput);
 cotaTableBody.addEventListener('change', handleCotaTableInput);
 cotaTableBody.addEventListener('click', handleCotaTableClick);
+inputs.cotaContrachequeUpload.addEventListener('change', (event) =>
+  handleContrachequeUpload(event.target.files)
+);
+cotaContrachequeList.addEventListener('change', handleContrachequeListChange);
+cotaContrachequeApply.addEventListener('click', applyContrachequesToCota);
 
 attachInputMasks();
 loadPremissas().finally(runTests);

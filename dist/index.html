@@ -171,6 +171,49 @@
 
           <div class="card" data-mode="cota">
             <div class="card-header">
+              <h2>Importar contracheques (PDF)</h2>
+              <p>Envie PDFs para extrair contribuições do participante.</p>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="cota-contracheque-upload">Upload múltiplo</label>
+                <input id="cota-contracheque-upload" type="file" accept="application/pdf" multiple />
+                <small>Extrai competência e rubricas contributivas do participante (normal/extra/pecúlio).</small>
+              </div>
+              <div class="field">
+                <label>Arquivos importados</label>
+                <div id="cota-contracheque-list" class="readout">Nenhum arquivo importado.</div>
+              </div>
+              <div class="field">
+                <label>Prévia dos itens extraídos</label>
+                <div class="table-wrapper">
+                  <table class="contrib-table">
+                    <thead>
+                      <tr>
+                        <th>Arquivo</th>
+                        <th>Competência</th>
+                        <th>Código</th>
+                        <th>Descrição</th>
+                        <th>Tipo</th>
+                        <th>Valor</th>
+                      </tr>
+                    </thead>
+                    <tbody id="cota-contracheque-preview"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="field">
+                <label>Totais por competência</label>
+                <div id="cota-contracheque-totals" class="readout">—</div>
+              </div>
+              <div class="actions">
+                <button class="primary" id="cota-contracheque-apply">Aplicar ao cálculo da Cota</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" data-mode="cota">
+            <div class="card-header">
               <h2>Dados/ajustes de contribuições</h2>
               <div class="actions">
                 <button class="ghost" id="cota-add-row">Adicionar linha</button>
@@ -201,6 +244,34 @@
 
           <div class="card" data-mode="cota">
             <div class="card-header">
+              <h2>Patrocinadora (Simulação)</h2>
+              <p>Fatores estimativos aplicados sobre as contribuições do participante.</p>
+            </div>
+            <div class="card-body">
+              <label class="checkbox">
+                <input type="checkbox" id="cota-include-sponsor" checked />
+                Incluir patrocinadora no cálculo da Cota
+              </label>
+              <div class="field-group">
+                <div class="field">
+                  <label for="cota-sponsor-normal">Fator patrocinadora (normal)</label>
+                  <input id="cota-sponsor-normal" type="number" min="0" step="0.01" value="1" />
+                </div>
+                <div class="field">
+                  <label for="cota-sponsor-extra">Fator patrocinadora (extraordinária)</label>
+                  <input id="cota-sponsor-extra" type="number" min="0" step="0.01" value="1" />
+                </div>
+                <div class="field">
+                  <label for="cota-sponsor-peculio">Fator patrocinadora (pecúlio)</label>
+                  <input id="cota-sponsor-peculio" type="number" min="0" step="0.01" value="0" />
+                </div>
+              </div>
+              <small>Fatores estimativos para simulação; ajustes devem ser documentados na auditoria.</small>
+            </div>
+          </div>
+
+          <div class="card" data-mode="cota">
+            <div class="card-header">
               <h2>Parâmetros da simulação</h2>
               <p>Premissas fixas e ajustes mínimos para a COTA.</p>
             </div>
@@ -211,36 +282,19 @@
                 <small>Se vazio, será usada a 1ª competência do extrato.</small>
               </div>
               <div class="field">
-                <label for="cota-regra-patro">Regra de contribuição da patrocinadora</label>
-                <select id="cota-regra-patro">
-                  <option value="A">Usar valores extraídos do documento (se houver colunas separadas)</option>
-                  <option value="B">Patrocinadora = Participante (1:1)</option>
-                  <option value="C">Patrocinadora = Participante × fator</option>
-                  <option value="D">Informar patrocinadora manualmente</option>
-                </select>
-              </div>
-              <div class="field" id="cota-patro-factor-field">
-                <label for="cota-patro-factor">Fator patrocinadora</label>
-                <input id="cota-patro-factor" type="number" min="0" step="0.01" value="1" />
-              </div>
-              <div class="field">
                 <label>Incluir tipos</label>
                 <div class="checkbox-list">
                   <label class="checkbox">
                     <input type="checkbox" id="cota-include-participante" checked />
-                    Contribuições normais do participante
+                    Contribuições do participante (normal/extra/pecúlio)
                   </label>
                   <label class="checkbox">
                     <input type="checkbox" id="cota-include-patrocinadora" checked />
-                    Contribuições normais da patrocinadora
+                    Contribuições da patrocinadora estimada
                   </label>
                   <label class="checkbox">
                     <input type="checkbox" id="cota-include-joia" checked />
                     Joia
-                  </label>
-                  <label class="checkbox">
-                    <input type="checkbox" id="cota-include-peculio" checked />
-                    Pecúlio
                   </label>
                   <label class="checkbox">
                     <input type="checkbox" id="cota-include-outros" checked />
