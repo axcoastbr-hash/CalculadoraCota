@@ -1,11 +1,11 @@
-# Calculadora VAEBA • PPSP-NR
+# Calculadora VAEBA e COTA • PPSP-NR
 
-Aplicação web offline para cálculo de VAEBA (Reserva Matemática Individual) exclusiva do plano PETROS PPSP-NR (Não Repactuados).
+Aplicação web para cálculo de VAEBA (Reserva Matemática Individual) e simulação de COTA patrimonial no plano PETROS PPSP-NR (Não Repactuados).
 
 ## Requisitos
 
 - Navegador moderno (Chrome/Edge/Firefox).
-- Não há dependências externas, tudo funciona offline.
+- O modo VAEBA funciona offline. O modo COTA usa PDF.js via CDN para leitura de PDF (requer conexão no primeiro carregamento).
 - Observação: as fontes `.woff/.woff2` não estão no repositório para facilitar a criação de PR. Para obter o visual final, adicione manualmente os arquivos em `src/assets/fonts/` e (após o build) em `dist/assets/fonts/`.
 - Para gerar o PDF timbrado, coloque o arquivo `timbrado.png` em `src/assets/` (e, após o build, em `dist/assets/`). Para substituir o timbrado basta trocar esse arquivo mantendo o mesmo nome.
 
@@ -14,7 +14,7 @@ Aplicação web offline para cálculo de VAEBA (Reserva Matemática Individual) 
 Abra um servidor local apontando para a pasta `src`:
 
 ```bash
-cd /workspace/TestCal1
+cd /workspace/CalculadoraCota
 python -m http.server 5173 --directory src
 ```
 
@@ -23,7 +23,7 @@ Acesse: `http://localhost:5173`
 ## Como gerar o build offline
 
 ```bash
-cd /workspace/TestCal1
+cd /workspace/CalculadoraCota
 ./build.sh
 ```
 
@@ -35,7 +35,7 @@ Isso copia os arquivos finais para a pasta `dist/`.
 - Opção 2: servir via servidor local simples:
 
 ```bash
-cd /workspace/TestCal1
+cd /workspace/CalculadoraCota
 python -m http.server 4173 --directory dist
 ```
 
@@ -47,6 +47,53 @@ Acesse: `http://localhost:4173`
 - `src/data/mortality_at2000_suavizada.js`: tábuas AT 2000 suavizadas (10%)
 - `src/data/interestRates.js`: mapa editável de taxas anuais
 
+## Como usar o modo COTA
+
+1. No campo **Modo de cálculo**, selecione **COTA (Simulação de patrimônio individual)**.
+2. Faça upload do PDF “Levantamento de Contribuições Normais e Joia”. O sistema tentará ler as competências e valores automaticamente.
+3. Se a leitura automática falhar, cole o texto do PDF no campo “Modo assistido (colar texto)” e clique em **Tentar leitura do texto colado**.
+4. Para importar contracheques:
+   - faça upload de um ou mais PDFs na seção **Importar contracheques (PDF)**;
+   - revise a competência detectada (preencha manualmente se necessário);
+   - clique em **Aplicar ao cálculo da Cota** para mesclar as rubricas de contribuição do participante.
+5. Revise/ajuste a tabela de contribuições:
+   - edite competência, tipo, valores e marque 13º quando aplicável;
+   - use **Adicionar linha** para inserir contribuições manuais.
+6. No card **Patrocinadora (Simulação)**, defina:
+   - se a patrocinadora entra no cálculo;
+   - os fatores de normal/extra/pecúlio usados para estimativa.
+7. No card **Parâmetros da simulação**, defina:
+   - data inicial (opcional);
+   - tipos de contribuição incluídos.
+8. Clique em **Calcular** para gerar:
+   - COTA total;
+   - totais por tipo;
+   - auditoria detalhada e parecer técnico resumido.
+
+## Conversão pré-Real (COTA)
+
+Valores anteriores a 1994-07 são convertidos para BRL utilizando a cadeia oficial de moedas até CR$ e a divisão final por 2.750 (URV). Competências anteriores a 1994-01 são corrigidas pelo INPC a partir de 1994-01 por limitação da série.
+
+## Estimativa da patrocinadora (COTA)
+
+A patrocinadora é estimada a partir das contribuições do participante por competência:
+
+- patrocinadora normal = participante normal × fator normal (padrão 1,0)
+- patrocinadora extra = participante extra × fator extra (padrão 1,0)
+- patrocinadora pecúlio = participante pecúlio × fator pecúlio (padrão 0,0)
+
+Os fatores são editáveis no card **Patrocinadora (Simulação)** e ficam registrados na auditoria.
+
+## Importação de contracheques
+
+O parser identifica competências e rubricas contributivas com base em códigos:
+
+- Normal: 6000, 6100, 6019
+- Extraordinária: 6060, 6160, 6061
+- Pecúlio: 6600, 6602, 6619
+
+Se houver dois PDFs com a mesma competência, os valores são somados e o caso é sinalizado na auditoria como duplicidade.
+
 ## Testes de sanidade
 
 A seção **"Testes de Sanidade"** é visível no browser e executa automaticamente:
@@ -56,6 +103,8 @@ A seção **"Testes de Sanidade"** é visível no browser e executa automaticame
 3. Coerência VAEBA_BRUTA > VAEBA_AJUSTADA.
 4. Sanidade da escala da tábua AT-2000 suavizada.
 5. Caso parecer (golden test) com checagem de äx(12) bruto/usado.
+6. Sanidade da conversão pré-Real e capitalização da COTA.
+7. Checagens rápidas de parse/classificação de contracheques.
 
 ## Correções do motor (parsing e fatores)
 

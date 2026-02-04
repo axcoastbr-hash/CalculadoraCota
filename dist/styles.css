@@ -172,8 +172,22 @@ select {
   border-radius: 10px;
 }
 
+textarea {
+  background: #12070a;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 10px;
+  resize: vertical;
+}
+
 input:focus,
 select:focus {
+  outline: 2px solid rgba(216, 92, 61, 0.6);
+  border-color: transparent;
+}
+
+textarea:focus {
   outline: 2px solid rgba(216, 92, 61, 0.6);
   border-color: transparent;
 }
@@ -250,6 +264,71 @@ small {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.checkbox-list {
+  display: grid;
+  gap: 8px;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.contracheque-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+
+.contracheque-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.contrib-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.contrib-table th,
+.contrib-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.contrib-table th {
+  color: var(--muted);
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.contrib-table input,
+.contrib-table select {
+  width: 100%;
+  min-width: 120px;
+}
+
+.contrib-table .table-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.totals-list {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.is-hidden {
+  display: none !important;
 }
 
 .pdf-options {
