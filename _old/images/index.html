@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calculadora VAEBA — PPSP-NR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="icon" href="images/logoMenor.jpg" type="image">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Calculadora de Reserva Matemática Individual (VAEBA)</h1>
+    </div>
+    <div class="badge">VAEBA = NSUA × SUP × äx(12) × FCB × FATCOR</div>
+    <img style="width: 100px; height: auto;" src="images/logo-luma.png" alt="Logo LUMA" class="logo" />
+  </header>
+
+  <main class="layout">
+    <section class="column">
+      <div class="card">
+        <div class="card-header">
+          <h2>Dados do Participante</h2>
+          <span class="pill">PPSP-NR</span>
+        </div>
+        <div class="grid two">
+          <label>Nome do participante
+            <input type="text" id="nome" placeholder="Ex.: João da Silva" />
+          </label>
+          <label>Sexo
+            <select id="sexo">
+              <option value="masc">Masculino</option>
+              <option value="fem">Feminino</option>
+            </select>
+          </label>
+          <label>Data de nascimento
+            <input type="date" id="dataNascimento" />
+          </label>
+          <label>Data do cálculo 
+            <input type="date" id="dataCalculo" />
+            <div style="color: gray; font-size: small;">
+              *Por padrão, a data atual é usada.
+            </div>
+            
+          </label>
+          <label>Competência base (MM/AAAA)
+            <input type="text" id="competenciaBase" placeholder="MM/AAAA" />
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Benefício e Rubricas</h2>
+          <span class="pill">Valores em R$</span>
+        </div>
+        <div class="grid two">
+          <label>Benefício PETROS bruto
+            <input type="text" id="beneficioBruto" placeholder="Ex.: 8.500,00" />
+          </label>
+          <label>Benefício PETROS líquido informado (opcional)
+            <input type="text" id="beneficioLiquido" placeholder="Ex.: 7.100,00" />
+          </label>
+        </div>
+        <div class="grid two rubricas">
+          <label>CONT. PETROS
+            <input type="text" class="rubrica" data-key="contPetros" placeholder="0,00" />
+          </label>
+          <label>PARC. DÉBITO PED PPSP
+            <input type="text" class="rubrica" data-key="parcDebito" placeholder="0,00" />
+          </label>
+          <label>CONT. EXTRAORDINÁRIA PPSP
+            <input type="text" class="rubrica" data-key="extraPPSP" placeholder="0,00" />
+          </label>
+          <label>CONT. EXTRAORDINÁRIA PPSP NR
+            <input type="text" class="rubrica" data-key="extraPPSPNR" placeholder="0,00" />
+          </label>
+          <label>CONTRIBUIÇÃO PETROS REF. PECÚLIO
+            <input type="text" class="rubrica" data-key="peculio" placeholder="0,00" />
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Premissas do Plano (fixas)</h2>
+          <span class="pill">Somente leitura</span>
+        </div>
+        <ul class="premissas">
+          <li><strong>Plano:</strong> PPSP-NR – Não Repactuados</li>
+          <li><strong>NSUA:</strong> 13 suplementações anuais</li>
+          <li><strong>FCB:</strong> 0,9818</li>
+          <li><strong>Taxa real de juros:</strong> i = 4,44% a.a.</li>
+          <li><strong>Crescimento real do benefício:</strong> 0%</li>
+          <li><strong>Mortalidade:</strong> IBGE 2024 (qx por sexo, ω=90, q<sub>90</sub>=1,0)</li>
+          <li><strong>Correção monetária:</strong> INPC embutido (1994-01 a 2025-11)</li>
+        </ul>
+      </div>
+
+      <div class="actions">
+        <button id="calcular" class="primary">Calcular</button>
+        <button id="limpar" class="ghost">Limpar</button>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Importar INPC (opcional)</h2>
+          <span class="pill">CSV ou JSON</span>
+        </div>
+        <p class="muted">Formato CSV esperado: <code>YYYY-MM;indice</code>. JSON: objeto {"YYYY-MM": indice}.</p>
+        <input type="file" id="inpcUpload" accept=".csv,.json" />
+        <p id="uploadStatus" class="status"></p>
+      </div>
+    </section>
+
+    <section class="column">
+      <div class="card highlight">
+        <div class="card-header">
+          <h2>Resultados</h2>
+          <span class="pill">Valores calculados</span>
+        </div>
+        <div class="result-grid">
+          <div>
+            <p class="label">VAEBA BRUTA</p>
+            <p id="vaebaBruta" class="value">—</p>
+          </div>
+          <div>
+            <p class="label">VAEBA AJUSTADA</p>
+            <p id="vaebaAjustada" class="value">—</p>
+          </div>
+          <div>
+            <p class="label">Fator K = NSUA × äx(12) × FCB × FATCOR</p>
+            <p id="fatorK" class="value">—</p>
+          </div>
+        </div>
+        <div id="alerts" class="alerts"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Auditoria do Cálculo</h2>
+          <button id="copiarAuditoria" class="ghost small">Copiar Auditoria</button>
+        </div>
+        <textarea id="auditoria" readonly></textarea>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Parecer Técnico Resumido</h2>
+          <button id="copiarParecer" class="ghost small">Copiar Parecer</button>
+        </div>
+        <textarea id="parecer" readonly></textarea>
+      </div>
+    </section>
+  </main>
+
+  <script src="data_mortality.js"></script>
+  <script src="data_inpc.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

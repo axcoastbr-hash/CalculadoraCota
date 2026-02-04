@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Calculadora VAEBA - PPSP-NR</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Calculadora Atuarial</p>
+          <h1>VAEBA (Reserva Matemática Individual) • PPSP-NR</h1>
+          <p class="subtitle">Simulador offline e exclusivo para participantes não repactuados.</p>
+        </div>
+        <div class="header-actions">
+          <button class="ghost" id="reset-btn">Limpar / Reset</button>
+          <button class="primary" id="calc-btn">Calcular</button>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="column">
+          <div class="card">
+            <div class="card-header">
+              <h2>Dados do Participante</h2>
+              <p>Preencha os campos obrigatórios para o cálculo.</p>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="nome">Nome</label>
+                <input id="nome" type="text" placeholder="Nome completo" />
+              </div>
+              <div class="field">
+                <label for="sexo">Sexo</label>
+                <select id="sexo">
+                  <option value="">Selecione</option>
+                  <option value="M">Masculino</option>
+                  <option value="F">Feminino</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="nascimento">Data de nascimento</label>
+                <input id="nascimento" type="date" />
+              </div>
+              <div class="field">
+                <label for="data-calculo">Data do cálculo</label>
+                <input id="data-calculo" type="date" />
+              </div>
+              <div class="field">
+                <label for="ano-taxa">Ano da taxa (opcional)</label>
+                <input id="ano-taxa" type="number" placeholder="Ex.: 2023" min="1994" max="2026" />
+                <small>Por padrão usa o último exercício fechado (ano do cálculo - 1).</small>
+              </div>
+              <div class="field">
+                <label for="competencia-base">Competência base INPC (MM/AAAA)</label>
+                <input id="competencia-base" type="text" placeholder="MM/AAAA" class="competencia-input" />
+              </div>
+              <div class="field">
+                <label for="competencia-final">Competência final INPC (MM/AAAA)</label>
+                <input id="competencia-final" type="text" placeholder="MM/AAAA" class="competencia-input" />
+                <small>Se vazio, será usada a competência da data do cálculo.</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Benefício e Rubricas</h2>
+              <p>Valores em moeda com máscara pt-BR.</p>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="beneficio-bruto">Benefício bruto</label>
+                <input id="beneficio-bruto" type="text" class="currency-input" placeholder="0,00" />
+              </div>
+              <div class="field-group">
+                <div class="field">
+                  <label for="rubrica-1">CONT. PETROS</label>
+                  <input id="rubrica-1" type="text" class="currency-input" placeholder="0,00" />
+                </div>
+                <div class="field">
+                  <label for="rubrica-2">PARC. DÉBITO PED PPSP</label>
+                  <input id="rubrica-2" type="text" class="currency-input" placeholder="0,00" />
+                </div>
+                <div class="field">
+                  <label for="rubrica-3">CONT. EXTRAORD. PPSP</label>
+                  <input id="rubrica-3" type="text" class="currency-input" placeholder="0,00" />
+                </div>
+                <div class="field">
+                  <label for="rubrica-4">CONT. EXTRAORD. PPSP NR</label>
+                  <input id="rubrica-4" type="text" class="currency-input" placeholder="0,00" />
+                </div>
+                <div class="field">
+                  <label for="rubrica-5">CONTRIBUIÇÃO PETROS REF. PECÚLIO</label>
+                  <input id="rubrica-5" type="text" class="currency-input" placeholder="0,00" />
+                </div>
+              </div>
+              <div class="field">
+                <label for="beneficio-liquido">Benefício líquido informado (opcional)</label>
+                <input id="beneficio-liquido" type="text" class="currency-input" placeholder="0,00" />
+                <small>Usado apenas para checagem de divergência.</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Premissas do Plano</h2>
+              <p>Parâmetros fixos do PPSP-NR.</p>
+            </div>
+            <div class="card-body readonly">
+              <div class="readonly-row">
+                <span>Plano</span>
+                <strong>PPSP-NR (Não Repactuados)</strong>
+              </div>
+              <div class="readonly-row">
+                <span>NSUA</span>
+                <strong>13</strong>
+              </div>
+              <div class="readonly-row">
+                <span>FCB</span>
+                <strong>0,9818</strong>
+              </div>
+              <div class="readonly-row">
+                <span>Crescimento real</span>
+                <strong>0% a.a.</strong>
+              </div>
+              <div class="readonly-row">
+                <span>FATCOR</span>
+                <strong>INPC (competência base → final)</strong>
+              </div>
+              <div class="readonly-row">
+                <span>äx(12)</span>
+                <strong>AT-2000 Suavizada (10%)</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="column">
+          <div class="card">
+            <div class="card-header">
+              <h2>Resultados</h2>
+              <p>Valores calculados com base nas premissas do PPSP-NR.</p>
+            </div>
+            <div class="card-body">
+              <div class="result-grid">
+                <div>
+                  <p class="label">FATCOR</p>
+                  <p class="value" id="fatcor">—</p>
+                </div>
+                <div>
+                  <p class="label">äx(12)</p>
+                  <p class="value" id="ax12">—</p>
+                </div>
+                <div>
+                  <p class="label">Taxa i</p>
+                  <p class="value" id="taxa-i">—</p>
+                </div>
+                <div>
+                  <p class="label">SUP ajustado</p>
+                  <p class="value" id="sup-ajustado">—</p>
+                </div>
+              </div>
+              <div class="result-highlight">
+                <div>
+                  <p class="label">VAEBA Bruta</p>
+                  <p class="value" id="vaeba-bruta">—</p>
+                </div>
+                <div>
+                  <p class="label">VAEBA Ajustada</p>
+                  <p class="value" id="vaeba-ajustada">—</p>
+                </div>
+              </div>
+              <div id="alertas" class="alertas"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Auditoria do Cálculo</h2>
+              <div class="actions">
+                <button class="ghost" id="copy-audit">Copiar Auditoria</button>
+              </div>
+            </div>
+            <div class="card-body">
+              <pre id="auditoria" class="readout">Nenhum cálculo realizado.</pre>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Parecer Técnico Resumido</h2>
+              <div class="actions">
+                <button class="ghost" id="copy-parecer">Copiar Parecer</button>
+                <button class="primary" id="download-parecer">Baixar Parecer (PDF timbrado)</button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="pdf-options">
+                <label class="checkbox">
+                  <input type="checkbox" id="include-audit" />
+                  Incluir auditoria como anexo
+                </label>
+                <p id="pdf-warning" class="pdf-warning" role="alert"></p>
+              </div>
+              <pre id="parecer" class="readout">Nenhum cálculo realizado.</pre>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Testes de Sanidade</h2>
+              <p>Verificações automáticas rápidas.</p>
+            </div>
+            <div class="card-body">
+              <ul id="tests" class="tests-list"></ul>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
