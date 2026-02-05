@@ -903,6 +903,10 @@ const parsePdfContributions = async (file) => {
   const entries = [];
   let foundText = false;
   let foundMonthHeader = false;
+const parsePdfContributions = async (file) => {
+  const data = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const entries = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);

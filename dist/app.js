@@ -1,5 +1,11 @@
 import { INPC_INDEX, INPC_RANGE } from './data/inpc.js';
 import { QX_FEM, QX_MASC } from './data/mortality_at2000_suavizada.js';
+import {
+  classifyCode,
+  parseBrazilianNumber,
+  parseCompetenciaFromText,
+  parseContrachequeText
+} from './parser_contracheque.js';
 import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.mjs';
 const FALLBACK_INTEREST_RATES = {
   2021: 0.0437,
@@ -847,6 +853,8 @@ const detectMonthColumns = (lines) => {
     const monthHits = MONTH_LABELS.filter(
       (label) => spaced.includes(label) || joined.includes(label)
     );
+    const text = line.items.map((item) => item.text.toUpperCase()).join(' ');
+    const monthHits = MONTH_LABELS.filter((label) => text.includes(label));
     if (monthHits.length >= 6) {
       const monthMap = {};
       line.items.forEach((item) => {
@@ -903,6 +911,10 @@ const parsePdfContributions = async (file) => {
   const entries = [];
   let foundText = false;
   let foundMonthHeader = false;
+const parsePdfContributions = async (file) => {
+  const data = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const entries = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
@@ -914,6 +926,9 @@ const parsePdfContributions = async (file) => {
     const monthMap = detectMonthColumns(lines);
     if (!monthMap) continue;
     foundMonthHeader = true;
+    const lines = groupTextItemsByLine(textContent.items);
+    const monthMap = detectMonthColumns(lines);
+    if (!monthMap) continue;
 
     lines.forEach((line) => {
       const lineText = line.items.map((item) => item.text).join(' ');
@@ -945,6 +960,7 @@ const parsePdfContributions = async (file) => {
   }
 
   return { entries, meta: { foundText, foundMonthHeader } };
+  return entries;
 };
 
 const parseManualTextContributions = (text) => {
@@ -1667,6 +1683,8 @@ const handleCotaPdfUpload = async (file) => {
         updateCotaStatus('Cabeçalho de meses não identificado no PDF. Use o modo assistido ou ajuste manual.');
         return;
       }
+    const entries = await parsePdfContributions(file);
+    if (!entries.length) {
       updateCotaStatus('Não foi possível identificar contribuições no PDF. Use o modo assistido.');
       return;
     }
