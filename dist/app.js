@@ -848,6 +848,11 @@ const groupTextItemsByLine = (items) => {
 
 const detectMonthColumns = (lines) => {
   for (const line of lines) {
+    const spaced = line.items.map((item) => item.text.toUpperCase()).join(' ');
+    const joined = line.items.map((item) => item.text.toUpperCase()).join('');
+    const monthHits = MONTH_LABELS.filter(
+      (label) => spaced.includes(label) || joined.includes(label)
+    );
     const text = line.items.map((item) => item.text.toUpperCase()).join(' ');
     const monthHits = MONTH_LABELS.filter((label) => text.includes(label));
     if (monthHits.length >= 6) {
@@ -891,6 +896,21 @@ const mapItemToMonth = (x, monthMap) => {
   return closest.month;
 };
 
+const loadPdfDocument = async (data) => {
+  try {
+    return await pdfjsLib.getDocument({ data }).promise;
+  } catch (error) {
+    console.warn('Falha ao carregar PDF com worker. Tentando modo compatível.', error);
+    return await pdfjsLib.getDocument({ data, disableWorker: true }).promise;
+  }
+};
+
+const parsePdfContributions = async (file) => {
+  const data = await file.arrayBuffer();
+  const pdf = await loadPdfDocument(data);
+  const entries = [];
+  let foundText = false;
+  let foundMonthHeader = false;
 const parsePdfContributions = async (file) => {
   const data = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data }).promise;
@@ -899,6 +919,13 @@ const parsePdfContributions = async (file) => {
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const textContent = await page.getTextContent();
+    if (textContent.items?.length) {
+      foundText = true;
+    }
+    const lines = groupTextItemsByLine(textContent.items);
+    const monthMap = detectMonthColumns(lines);
+    if (!monthMap) continue;
+    foundMonthHeader = true;
     const lines = groupTextItemsByLine(textContent.items);
     const monthMap = detectMonthColumns(lines);
     if (!monthMap) continue;
@@ -932,6 +959,7 @@ const parsePdfContributions = async (file) => {
     });
   }
 
+  return { entries, meta: { foundText, foundMonthHeader } };
   return entries;
 };
 
@@ -1645,6 +1673,16 @@ const handleCotaPdfUpload = async (file) => {
   if (!file) return;
   updateCotaStatus('Lendo PDF...');
   try {
+    const { entries, meta } = await parsePdfContributions(file);
+    if (!entries.length) {
+      if (!meta.foundText) {
+        updateCotaStatus('PDF sem texto identificável. Use o modo assistido (colar texto) ou OCR externo.');
+        return;
+      }
+      if (!meta.foundMonthHeader) {
+        updateCotaStatus('Cabeçalho de meses não identificado no PDF. Use o modo assistido ou ajuste manual.');
+        return;
+      }
     const entries = await parsePdfContributions(file);
     if (!entries.length) {
       updateCotaStatus('Não foi possível identificar contribuições no PDF. Use o modo assistido.');
