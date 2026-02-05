@@ -1,5 +1,11 @@
 import { INPC_INDEX, INPC_RANGE } from './data/inpc.js';
 import { QX_FEM, QX_MASC } from './data/mortality_at2000_suavizada.js';
+import {
+  classifyCode,
+  parseBrazilianNumber,
+  parseCompetenciaFromText,
+  parseContrachequeText
+} from './parser_contracheque.js';
 import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.mjs';
 const FALLBACK_INTEREST_RATES = {
   2021: 0.0437,
