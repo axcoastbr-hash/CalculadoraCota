@@ -52,20 +52,13 @@ Acesse: `http://localhost:4173`
 1. No campo **Modo de cálculo**, selecione **COTA (Simulação de patrimônio individual)**.
 2. Faça upload do PDF “Levantamento de Contribuições Normais e Joia”. O sistema tentará ler as competências e valores automaticamente.
 3. Se a leitura automática falhar, cole o texto do PDF no campo “Modo assistido (colar texto)” e clique em **Tentar leitura do texto colado**.
-4. Para importar contracheques:
-   - faça upload de um ou mais PDFs na seção **Importar contracheques (PDF)**;
-   - revise a competência detectada (preencha manualmente se necessário);
-   - clique em **Aplicar ao cálculo da Cota** para mesclar as rubricas de contribuição do participante.
-5. Revise/ajuste a tabela de contribuições:
+4. Revise/ajuste a tabela de contribuições:
    - edite competência, tipo, valores e marque 13º quando aplicável;
    - use **Adicionar linha** para inserir contribuições manuais.
-6. No card **Patrocinadora (Simulação)**, defina:
-   - se a patrocinadora entra no cálculo;
-   - os fatores de normal/extra/pecúlio usados para estimativa.
-7. No card **Parâmetros da simulação**, defina:
+5. No card **Parâmetros da simulação**, defina:
    - data inicial (opcional);
    - tipos de contribuição incluídos.
-8. Clique em **Calcular** para gerar:
+6. Clique em **Calcular** para gerar:
    - COTA total;
    - totais por tipo;
    - auditoria detalhada e parecer técnico resumido.
@@ -74,25 +67,6 @@ Acesse: `http://localhost:4173`
 
 Valores anteriores a 1994-07 são convertidos para BRL utilizando a cadeia oficial de moedas até CR$ e a divisão final por 2.750 (URV). Competências anteriores a 1994-01 são corrigidas pelo INPC a partir de 1994-01 por limitação da série.
 
-## Estimativa da patrocinadora (COTA)
-
-A patrocinadora é estimada a partir das contribuições do participante por competência:
-
-- patrocinadora normal = participante normal × fator normal (padrão 1,0)
-- patrocinadora extra = participante extra × fator extra (padrão 1,0)
-- patrocinadora pecúlio = participante pecúlio × fator pecúlio (padrão 0,0)
-
-Os fatores são editáveis no card **Patrocinadora (Simulação)** e ficam registrados na auditoria.
-
-## Importação de contracheques
-
-O parser identifica competências e rubricas contributivas com base em códigos:
-
-- Normal: 6000, 6100, 6019
-- Extraordinária: 6060, 6160, 6061
-- Pecúlio: 6600, 6602, 6619
-
-Se houver dois PDFs com a mesma competência, os valores são somados e o caso é sinalizado na auditoria como duplicidade.
 
 ## Testes de sanidade
 
@@ -104,7 +78,6 @@ A seção **"Testes de Sanidade"** é visível no browser e executa automaticame
 4. Sanidade da escala da tábua AT-2000 suavizada.
 5. Caso parecer (golden test) com checagem de äx(12) bruto/usado.
 6. Sanidade da conversão pré-Real e capitalização da COTA.
-7. Checagens rápidas de parse/classificação de contracheques.
 
 ## Correções do motor (parsing e fatores)
 
