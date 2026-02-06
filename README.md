@@ -68,6 +68,13 @@ Acesse: `http://localhost:4173`
 
 Valores anteriores a 1994-07 são convertidos para BRL utilizando a cadeia oficial de moedas até CR$ e a divisão final por 2.750 (URV). Competências anteriores a 1994-01 são corrigidas pelo INPC a partir de 1994-01 por limitação da série.
 
+## Política INPC (COTA)
+
+- Série embutida: 1994-01 a 2025-11.
+- Competências anteriores a 1994-01 são ancoradas em 1994-01 (INPC base).
+- Competência final acima do último mês da série é clampada para o último índice disponível.
+- Os avisos são consolidados em bloco único na auditoria da COTA.
+
 ## Testes de sanidade
 
 A seção **"Testes de Sanidade"** é visível no browser e executa automaticamente:
