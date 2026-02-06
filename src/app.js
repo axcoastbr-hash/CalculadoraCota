@@ -959,6 +959,9 @@ const FOOTER_BLOCKLIST = [
   'PÁGINA'
 ];
 
+const TABLE_END_TOKENS = ['OBSERVACOES', 'OBSERVAÇÕES', 'HISTORICO', 'HISTÓRICO', 'ARR', 'PAGINA', 'PÁGINA', 'DATA'];
+const PDF_PARSE_DEBUG = false;
+
 const clusterByY = (items, yTolerance) => {
   const sorted = items
     .map((item) => ({
@@ -995,13 +998,16 @@ const normalizeHeaderText = (text) =>
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '');
 
+const headerHasAllMonths = (normalized) =>
+  MONTH_HEADERS.every((month) => month.labels.some((label) => normalized.includes(label)));
+
 const detectHeaderLine = (lines) => {
   for (const line of lines) {
     const normalized = normalizeHeaderText(line.text);
     const hasAno = normalized.includes('ANO');
-    const hasJaneiro = normalized.includes('JANEIRO') || normalized.includes('JAN');
     const has13 = normalized.includes('13') || normalized.includes('13O');
-    if (hasAno && hasJaneiro && has13) {
+    const hasAllMonths = headerHasAllMonths(normalized);
+    if (hasAno && hasAllMonths && has13) {
       return line;
     }
   }
@@ -1057,43 +1063,83 @@ const inferLineType = (text) => {
   return 'PARTICIPANTE_NORMAL';
 };
 
+const mapLineItemsToColumns = (items, columns, maxDx) => {
+  const moneyPattern = /-?\d{1,3}(?:\.\d{3})*,\d{2}/;
+  const bestByColumn = {};
+  items.forEach((item) => {
+    const text = item.text;
+    if (!moneyPattern.test(text)) return;
+    if (text.includes('/') || (text.includes('-') && !text.startsWith('-'))) return;
+    let nearest = null;
+    columns.forEach((column) => {
+      const dx = Math.abs(item.x - column.x);
+      if (!nearest || dx < nearest.dx) {
+        nearest = { key: column.key, dx };
+      }
+    });
+    if (!nearest || nearest.dx > maxDx) return;
+    if (nearest.key === 'ano') return;
+    if (!bestByColumn[nearest.key] || nearest.dx < bestByColumn[nearest.key].dx) {
+      bestByColumn[nearest.key] = {
+        dx: nearest.dx,
+        raw: text,
+        value: parseMoneyPtBR(text)
+      };
+    }
+  });
+  return bestByColumn;
+};
+
 const extractRowsFromLines = ({ lines, headerLine, columns, maxDx }) => {
   const yearPattern = /^(19|20)\d{2}$/;
-  const moneyPattern = /-?\d{1,3}(?:\.\d{3})*,\d{2}/;
-  const headerY = headerLine?.y ?? Infinity;
+  const headerIndex = lines.indexOf(headerLine);
+  if (headerIndex < 0) return [];
+  const rows = [];
+  let currentRow = null;
+  const stats = {
+    discarded: 0,
+    outsideWindow: 0,
+    nonYear: 0,
+    incomplete: 0,
+    years: []
+  };
 
-  return lines
-    .filter((line) => line.y < headerY - 1)
-    .map((line) => {
-      const normalizedText = normalizeHeaderText(line.text);
+  for (let i = headerIndex + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    const normalizedText = normalizeHeaderText(line.text);
+    if (TABLE_END_TOKENS.some((token) => normalizedText.includes(token))) {
+      break;
+    }
+    if (FOOTER_BLOCKLIST.some((token) => normalizedText.includes(token))) {
+      stats.discarded += 1;
+      continue;
+    }
+    const leftmost = line.items[0];
+    const yearMatch = leftmost?.text?.match(yearPattern);
+    if (yearMatch) {
+      if (currentRow) rows.push(currentRow);
+      currentRow = {
+        year: Number(yearMatch[0]),
+        items: [...line.items],
+        lineText: line.text
+      };
+      stats.years.push(Number(yearMatch[0]));
+      continue;
+    }
+    if (currentRow) {
+      currentRow.items.push(...line.items);
+      currentRow.lineText = `${currentRow.lineText} ${line.text}`.trim();
+    } else {
+      stats.nonYear += 1;
+    }
+  }
+  if (currentRow) rows.push(currentRow);
+
+  const formatted = rows
+    .map((row) => {
+      const normalizedText = normalizeHeaderText(row.lineText);
       if (FOOTER_BLOCKLIST.some((token) => normalizedText.includes(token))) return null;
-
-      const leftmost = line.items[0];
-      const yearMatch = leftmost?.text?.match(yearPattern);
-      if (!yearMatch) return null;
-      const year = Number(yearMatch[0]);
-
-      const bestByColumn = {};
-      line.items.forEach((item) => {
-        if (!moneyPattern.test(item.text)) return;
-        let nearest = null;
-        columns.forEach((column) => {
-          const dx = Math.abs(item.x - column.x);
-          if (!nearest || dx < nearest.dx) {
-            nearest = { key: column.key, dx };
-          }
-        });
-        if (!nearest || nearest.dx > maxDx) return;
-        if (nearest.key === 'ano') return;
-        if (!bestByColumn[nearest.key] || nearest.dx < bestByColumn[nearest.key].dx) {
-          bestByColumn[nearest.key] = {
-            dx: nearest.dx,
-            raw: item.text,
-            value: parseMoneyPtBR(item.text)
-          };
-        }
-      });
-
+      const bestByColumn = mapLineItemsToColumns(row.items, columns, maxDx);
       const months = {};
       const raw = {};
       ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13'].forEach(
@@ -1103,17 +1149,25 @@ const extractRowsFromLines = ({ lines, headerLine, columns, maxDx }) => {
           raw[key] = entry?.raw ?? null;
         }
       );
-
       const filled = Object.values(months).filter((value) => value !== null).length;
+      if (filled < 13) {
+        stats.incomplete += 1;
+      }
       return {
-        year,
+        year: row.year,
         months,
         raw,
         confidence: { filled, missing: 13 - filled },
-        lineText: line.text
+        lineText: row.lineText
       };
     })
     .filter(Boolean);
+
+  if (PDF_PARSE_DEBUG) {
+    console.info('[PDF] Linhas não iniciadas por ano:', stats.nonYear);
+    console.info('[PDF] Linhas incompletas:', stats.incomplete);
+  }
+  return { rows: formatted, stats };
 };
 
 const consolidateRows = (rows) => {
@@ -1182,8 +1236,13 @@ const parsePdfContributions = async (file) => {
       if (!columns) continue;
       const maxDx = computeMaxDx(columns);
       if (!maxDx) continue;
-      const pageRows = extractRowsFromLines({ lines, headerLine, columns, maxDx });
-      pageRows.forEach((row) => rows.push({ ...row, page: pageNumber }));
+      const pageResult = extractRowsFromLines({ lines, headerLine, columns, maxDx });
+      if (PDF_PARSE_DEBUG) {
+        console.info('[PDF] Cabeçalho detectado na página', pageNumber);
+        console.info('[PDF] Linhas de ano encontradas:', pageResult.rows.map((row) => row.year).join(', '));
+        console.info('[PDF] Linhas incompletas:', pageResult.stats.incomplete);
+      }
+      pageResult.rows.forEach((row) => rows.push({ ...row, page: pageNumber }));
     }
     const consolidated = consolidateRows(rows);
     const filledCount = consolidated.reduce((sum, row) => sum + row.confidence.filled, 0);
