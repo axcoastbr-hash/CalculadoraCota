@@ -2107,6 +2107,18 @@ const handleApplyPdf = () => {
   cotaEntries = lastParsedPdf.entries;
   renderCotaTable(inputs.dataCalculo.value);
   updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
+ codex/corrigir-leitura-da-calculadora-h7bkpl
+};
+
+const handleApplyPdf = () => {
+  if (!lastParsedPdf || !lastParsedPdf.entries.length) {
+    updateCotaStatus('Nenhuma leitura validada para aplicar.');
+    return;
+  }
+  cotaEntries = lastParsedPdf.entries;
+  renderCotaTable(inputs.dataCalculo.value);
+  updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
+ codex/add-cota-calculation-option-to-calculator
 };
 
 const handleManualParse = () => {
