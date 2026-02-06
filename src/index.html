@@ -155,10 +155,18 @@
                 <label for="cota-pdf">Upload do PDF</label>
                 <input id="cota-pdf" type="file" accept="application/pdf" />
                 <small>O parser tenta identificar competências, valores mensais e 13º.</small>
+                <div class="actions">
+                  <button class="ghost" id="cota-validate-pdf">Validar leitura</button>
+                  <button class="primary" id="cota-apply-pdf" disabled>Aplicar na tabela</button>
+                </div>
               </div>
               <div class="field">
                 <label for="cota-pdf-status">Status da leitura</label>
                 <div id="cota-pdf-status" class="readout">Nenhum arquivo carregado.</div>
+              </div>
+              <div class="field">
+                <label for="cota-pdf-preview">Pré-visualização da tabela</label>
+                <div id="cota-pdf-preview" class="readout is-scrollable">Nenhuma leitura validada.</div>
               </div>
               <div class="field">
                 <label for="cota-manual-text">Modo assistido (colar texto)</label>

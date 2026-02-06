@@ -92,7 +92,10 @@ const downloadParecerButton = document.getElementById('download-parecer');
 const includeAuditCheckbox = document.getElementById('include-audit');
 const pdfWarning = document.getElementById('pdf-warning');
 const cotaPdfStatus = document.getElementById('cota-pdf-status');
+const cotaPdfPreview = document.getElementById('cota-pdf-preview');
 const cotaParseManualButton = document.getElementById('cota-parse-manual');
+const cotaValidatePdfButton = document.getElementById('cota-validate-pdf');
+const cotaApplyPdfButton = document.getElementById('cota-apply-pdf');
 const cotaAddRowButton = document.getElementById('cota-add-row');
 const cotaRecalcButton = document.getElementById('cota-recalc');
 const cotaTableBody = document.getElementById('cota-table-body');
@@ -118,6 +121,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 let cotaEntries = [];
 let cotaIdCounter = 1;
 let currentMode = 'vaeba';
+let lastParsedPdf = null;
+let cotaPdfFile = null;
 
 const parseCurrency = (value) => {
   if (!value) return 0;
@@ -136,6 +141,13 @@ const parseBrazilianNumber = (value) => {
   const normalized = value.toString().replace(/\s/g, '').replace(/\./g, '').replace(/,/g, '.');
   const parsed = Number.parseFloat(normalized);
   return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const parseMoneyPtBR = (value) => {
+  if (!value) return null;
+  const normalized = value.toString().replace(/\s/g, '').replace(/\./g, '').replace(/,/g, '.');
+  const parsed = Number.parseFloat(normalized);
+  return Number.isNaN(parsed) ? null : parsed;
 };
 
 const formatCurrencyInput = (raw) => {
@@ -835,9 +847,36 @@ const calculateCota = () => {
   outputs.parecer.textContent = buildCotaParecer(auditData);
 };
 
-const MONTH_LABELS = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
+const MONTH_HEADERS = [
+  { key: '01', labels: ['JANEIRO', 'JAN'] },
+  { key: '02', labels: ['FEVEREIRO', 'FEV'] },
+  { key: '03', labels: ['MARÇO', 'MARCO', 'MAR'] },
+  { key: '04', labels: ['ABRIL', 'ABR'] },
+  { key: '05', labels: ['MAIO', 'MAI'] },
+  { key: '06', labels: ['JUNHO', 'JUN'] },
+  { key: '07', labels: ['JULHO', 'JUL'] },
+  { key: '08', labels: ['AGOSTO', 'AGO'] },
+  { key: '09', labels: ['SETEMBRO', 'SET'] },
+  { key: '10', labels: ['OUTUBRO', 'OUT'] },
+  { key: '11', labels: ['NOVEMBRO', 'NOV'] },
+  { key: '12', labels: ['DEZEMBRO', 'DEZ'] }
+];
 
-const groupTextItemsByLine = (items) => {
+const FOOTER_BLOCKLIST = [
+  'PARTICIPANTE',
+  'PATROCINADORA',
+  'MATRICULA',
+  'MATRÍCULA',
+  'INSCRICAO',
+  'INSCRIÇÃO',
+  'DATA',
+  'HORA',
+  'ARR',
+  'PAGINA',
+  'PÁGINA'
+];
+
+const clusterByY = (items, yTolerance) => {
   const sorted = items
     .map((item) => ({
       text: item.str.trim(),
@@ -849,10 +888,9 @@ const groupTextItemsByLine = (items) => {
 
   const lines = [];
   let currentLine = null;
-  const tolerance = 2;
 
   sorted.forEach((item) => {
-    if (!currentLine || Math.abs(currentLine.y - item.y) > tolerance) {
+    if (!currentLine || Math.abs(currentLine.y - item.y) > yTolerance) {
       currentLine = { y: item.y, items: [item] };
       lines.push(currentLine);
     } else {
@@ -862,31 +900,70 @@ const groupTextItemsByLine = (items) => {
 
   return lines.map((line) => ({
     y: line.y,
-    items: line.items.sort((a, b) => a.x - b.x)
+    items: line.items.sort((a, b) => a.x - b.x),
+    text: line.items.map((item) => item.text).join(' ')
   }));
 };
 
-const detectMonthColumns = (lines) => {
+const normalizeHeaderText = (text) =>
+  text
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '');
+
+const detectHeaderLine = (lines) => {
   for (const line of lines) {
-    const text = line.items.map((item) => item.text.toUpperCase()).join(' ');
-    const monthHits = MONTH_LABELS.filter((label) => text.includes(label));
-    if (monthHits.length >= 6) {
-      const monthMap = {};
-      line.items.forEach((item) => {
-        const upper = item.text.toUpperCase();
-        MONTH_LABELS.forEach((label, index) => {
-          if (upper.includes(label)) {
-            monthMap[index + 1] = item.x;
-          }
-        });
-        if (/13/.test(upper)) {
-          monthMap[13] = item.x;
-        }
-      });
-      return monthMap;
+    const normalized = normalizeHeaderText(line.text);
+    const hasAno = normalized.includes('ANO');
+    const hasJaneiro = normalized.includes('JANEIRO') || normalized.includes('JAN');
+    const has13 = normalized.includes('13') || normalized.includes('13O');
+    if (hasAno && hasJaneiro && has13) {
+      return line;
     }
   }
   return null;
+};
+
+const buildColumnMap = (headerLine) => {
+  const columns = [];
+  const headerItems = headerLine.items.map((item) => ({
+    text: normalizeHeaderText(item.text),
+    x: item.x
+  }));
+  const anoItem = headerItems.find((item) => item.text.includes('ANO'));
+  if (!anoItem) return null;
+  columns.push({ key: 'ano', x: anoItem.x });
+
+  for (const month of MONTH_HEADERS) {
+    const monthItem = headerItems.find((item) =>
+      month.labels.some((label) => item.text.includes(label))
+    );
+    if (!monthItem) return null;
+    columns.push({ key: month.key, x: monthItem.x });
+  }
+
+  const thirteenthItem = headerItems.find((item) => item.text.includes('13'));
+  if (!thirteenthItem) return null;
+  columns.push({ key: '13', x: thirteenthItem.x });
+
+  return columns.sort((a, b) => a.x - b.x);
+};
+
+const median = (values) => {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+};
+
+const computeMaxDx = (columns) => {
+  const distances = [];
+  for (let i = 1; i < columns.length; i += 1) {
+    distances.push(columns[i].x - columns[i - 1].x);
+  }
+  const medianDistance = median(distances);
+  return medianDistance ? medianDistance / 2 : 0;
 };
 
 const inferLineType = (text) => {
@@ -897,63 +974,173 @@ const inferLineType = (text) => {
   return 'PARTICIPANTE_NORMAL';
 };
 
-const mapItemToMonth = (x, monthMap) => {
-  const entries = Object.entries(monthMap).map(([month, pos]) => ({
-    month: Number(month),
-    pos
-  }));
-  entries.sort((a, b) => a.pos - b.pos);
-  let closest = entries[0];
-  entries.forEach((entry) => {
-    if (Math.abs(entry.pos - x) < Math.abs(closest.pos - x)) {
-      closest = entry;
+const extractRowsFromLines = ({ lines, headerLine, columns, maxDx }) => {
+  const yearPattern = /^(19|20)\d{2}$/;
+  const moneyPattern = /-?\d{1,3}(?:\.\d{3})*,\d{2}/;
+  const headerY = headerLine?.y ?? Infinity;
+
+  return lines
+    .filter((line) => line.y < headerY - 1)
+    .map((line) => {
+      const normalizedText = normalizeHeaderText(line.text);
+      if (FOOTER_BLOCKLIST.some((token) => normalizedText.includes(token))) return null;
+
+      const leftmost = line.items[0];
+      const yearMatch = leftmost?.text?.match(yearPattern);
+      if (!yearMatch) return null;
+      const year = Number(yearMatch[0]);
+
+      const bestByColumn = {};
+      line.items.forEach((item) => {
+        if (!moneyPattern.test(item.text)) return;
+        let nearest = null;
+        columns.forEach((column) => {
+          const dx = Math.abs(item.x - column.x);
+          if (!nearest || dx < nearest.dx) {
+            nearest = { key: column.key, dx };
+          }
+        });
+        if (!nearest || nearest.dx > maxDx) return;
+        if (nearest.key === 'ano') return;
+        if (!bestByColumn[nearest.key] || nearest.dx < bestByColumn[nearest.key].dx) {
+          bestByColumn[nearest.key] = {
+            dx: nearest.dx,
+            raw: item.text,
+            value: parseMoneyPtBR(item.text)
+          };
+        }
+      });
+
+      const months = {};
+      const raw = {};
+      ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13'].forEach(
+        (key) => {
+          const entry = bestByColumn[key];
+          months[key] = entry?.value ?? null;
+          raw[key] = entry?.raw ?? null;
+        }
+      );
+
+      const filled = Object.values(months).filter((value) => value !== null).length;
+      return {
+        year,
+        months,
+        raw,
+        confidence: { filled, missing: 13 - filled },
+        lineText: line.text
+      };
+    })
+    .filter(Boolean);
+};
+
+const consolidateRows = (rows) => {
+  const byYear = new Map();
+  rows.forEach((row) => {
+    const existing = byYear.get(row.year);
+    if (!existing || row.confidence.filled > existing.confidence.filled) {
+      byYear.set(row.year, row);
     }
   });
-  return closest.month;
+  return Array.from(byYear.values()).sort((a, b) => a.year - b.year);
+};
+
+const evaluateRows = (rows) => {
+  const warnings = [];
+  const errors = [];
+  if (!rows.length) {
+    errors.push('Nenhuma linha de ano foi identificada na tabela.');
+    return { warnings, errors };
+  }
+
+  const incompleteRows = rows.filter((row) => row.confidence.filled < 13);
+  if (incompleteRows.length) {
+    errors.push('A tabela extraída está incompleta (faltam meses/13º em alguns anos).');
+  }
+
+  const years = rows.map((row) => row.year);
+  const outOfRange = years.filter((year) => year < 1900 || year > 2100);
+  if (outOfRange.length) {
+    errors.push('Foram encontrados anos fora do intervalo esperado.');
+  }
+
+  const notIncreasing = rows.some((row, index) => index > 0 && row.year <= rows[index - 1].year);
+  if (notIncreasing) {
+    warnings.push('Os anos não estão estritamente crescentes; confira a tabela.');
+  }
+
+  const outlierRows = rows.filter((row) => row.year >= 1995).filter((row) => {
+    const hugeValues = Object.values(row.months).filter((value) => value !== null && value >= 1000000);
+    return hugeValues.length >= 4;
+  });
+  if (outlierRows.length) {
+    warnings.push(
+      'Valores muito altos detectados em anos pós-Real. Verifique se a leitura ficou alinhada.'
+    );
+  }
+
+  return { warnings, errors };
 };
 
 const parsePdfContributions = async (file) => {
   const data = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data }).promise;
-  const entries = [];
+  const tolerances = [1.5, 2, 2.5, 3];
+  const candidates = [];
 
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    const lines = groupTextItemsByLine(textContent.items);
-    const monthMap = detectMonthColumns(lines);
-    if (!monthMap) continue;
-
-    lines.forEach((line) => {
-      const lineText = line.items.map((item) => item.text).join(' ');
-      if (lineText.toUpperCase().includes('TOTAL')) return;
-      const yearMatch = lineText.match(/\b(19\d{2}|20\d{2})\b/);
-      if (!yearMatch) return;
-      const year = Number(yearMatch[1]);
-      const type = inferLineType(lineText);
-
-      line.items.forEach((item) => {
-        if (!/[\d.,]/.test(item.text)) return;
-        const value = parseBrazilianNumber(item.text);
-        if (!value) return;
-        const month = mapItemToMonth(item.x, monthMap);
-        if (!month || month > 13) return;
-        const competence = `${year}-${String(month === 13 ? 12 : month).padStart(2, '0')}`;
-        entries.push(
-          createCotaEntry({
-            competence,
-            type,
-            amountNominal: value,
-            is13: month === 13,
-            source: 'pdf',
-            notes: `Página ${pageNumber}`
-          })
-        );
-      });
+  for (const tolerance of tolerances) {
+    const rows = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const textContent = await page.getTextContent({ disableCombineTextItems: false });
+      const lines = clusterByY(textContent.items, tolerance);
+      const headerLine = detectHeaderLine(lines);
+      if (!headerLine) continue;
+      const columns = buildColumnMap(headerLine);
+      if (!columns) continue;
+      const maxDx = computeMaxDx(columns);
+      if (!maxDx) continue;
+      const pageRows = extractRowsFromLines({ lines, headerLine, columns, maxDx });
+      pageRows.forEach((row) => rows.push({ ...row, page: pageNumber }));
+    }
+    const consolidated = consolidateRows(rows);
+    const filledCount = consolidated.reduce((sum, row) => sum + row.confidence.filled, 0);
+    const completeCount = consolidated.filter((row) => row.confidence.filled === 13).length;
+    candidates.push({
+      tolerance,
+      rows: consolidated,
+      score: completeCount * 20 + filledCount
     });
   }
 
-  return entries;
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0] || { rows: [] };
+  const { warnings, errors } = evaluateRows(best.rows);
+
+  if (errors.length) {
+    return { entries: [], rows: best.rows, warnings, errors };
+  }
+
+  const entries = [];
+  best.rows.forEach((row) => {
+    const type = inferLineType(row.lineText);
+    Object.entries(row.months).forEach(([monthKey, value]) => {
+      if (value === null) return;
+      const is13 = monthKey === '13';
+      const competence = `${row.year}-${String(is13 ? 12 : Number(monthKey)).padStart(2, '0')}`;
+      entries.push(
+        createCotaEntry({
+          competence,
+          type,
+          amountNominal: value,
+          is13,
+          source: 'pdf',
+          notes: `Ano ${row.year}`
+        })
+      );
+    });
+  });
+
+  return { entries, rows: best.rows, warnings, errors };
 };
 
 const parseManualTextContributions = (text) => {
@@ -986,6 +1173,56 @@ const parseManualTextContributions = (text) => {
       });
     });
   return entries;
+};
+
+const buildPreviewTable = (rows) => {
+  if (!rows.length) return 'Nenhuma leitura validada.';
+  const headerCells = [
+    'Ano',
+    'Jan',
+    'Fev',
+    'Mar',
+    'Abr',
+    'Mai',
+    'Jun',
+    'Jul',
+    'Ago',
+    'Set',
+    'Out',
+    'Nov',
+    'Dez',
+    '13º'
+  ]
+    .map((label) => `<th>${label}</th>`)
+    .join('');
+
+  const bodyRows = rows
+    .map((row) => {
+      const cells = [
+        row.year,
+        row.months['01'],
+        row.months['02'],
+        row.months['03'],
+        row.months['04'],
+        row.months['05'],
+        row.months['06'],
+        row.months['07'],
+        row.months['08'],
+        row.months['09'],
+        row.months['10'],
+        row.months['11'],
+        row.months['12'],
+        row.months['13']
+      ]
+        .map((value, index) =>
+          index === 0 ? `<td>${value}</td>` : `<td>${value === null ? '—' : formatNumber(value)}</td>`
+        )
+        .join('');
+      return `<tr>${cells}</tr>`;
+    })
+    .join('');
+
+  return `<table class="preview-table"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>`;
 };
 
 const renderAlerts = (warnings) => {
@@ -1235,6 +1472,11 @@ const resetForm = () => {
   outputs.parecer.textContent = 'Nenhum cálculo realizado.';
   setPdfWarning('');
   cotaEntries = [];
+  lastParsedPdf = null;
+  cotaPdfFile = null;
+  cotaPdfPreview.innerHTML = 'Nenhuma leitura validada.';
+  cotaApplyPdfButton.disabled = true;
+  updateCotaStatus('Nenhum arquivo carregado.');
   cotaTableBody.innerHTML = '';
   cotaPdfStatus.textContent = 'Nenhum arquivo carregado.';
 };
@@ -1671,20 +1913,51 @@ const updateCotaStatus = (message) => {
 
 const handleCotaPdfUpload = async (file) => {
   if (!file) return;
-  updateCotaStatus('Lendo PDF...');
+  cotaPdfFile = file;
+  lastParsedPdf = null;
+  cotaApplyPdfButton.disabled = true;
+  cotaPdfPreview.innerHTML = 'Nenhuma leitura validada.';
+  updateCotaStatus('Arquivo carregado. Clique em “Validar leitura” para conferir a extração.');
+};
+
+const handleValidatePdf = async () => {
+  if (!cotaPdfFile) {
+    updateCotaStatus('Carregue um PDF antes de validar a leitura.');
+    return;
+  }
+  updateCotaStatus('Validando leitura do PDF...');
+  cotaPdfPreview.innerHTML = 'Processando...';
+  cotaApplyPdfButton.disabled = true;
   try {
-    const entries = await parsePdfContributions(file);
-    if (!entries.length) {
-      updateCotaStatus('Não foi possível identificar contribuições no PDF. Use o modo assistido.');
+    const result = await parsePdfContributions(cotaPdfFile);
+    lastParsedPdf = result;
+    cotaPdfPreview.innerHTML = buildPreviewTable(result.rows);
+    if (result.errors.length) {
+      updateCotaStatus(
+        `Não foi possível extrair a tabela com confiança. ${result.errors.join(' ')}`
+      );
       return;
     }
-    cotaEntries = entries;
-    updateCotaStatus(`Leitura concluída: ${entries.length} lançamentos identificados.`);
-    renderCotaTable(inputs.dataCalculo.value);
+    const warningText = result.warnings.length ? ` Avisos: ${result.warnings.join(' ')}` : '';
+    updateCotaStatus(
+      `Leitura validada: ${result.entries.length} lançamentos identificados.${warningText}`
+    );
+    cotaApplyPdfButton.disabled = false;
   } catch (error) {
     console.error(error);
-    updateCotaStatus('Falha ao ler o PDF. Tente o modo assistido ou ajuste manual.');
+    updateCotaStatus('Falha ao validar o PDF. Tente novamente ou use o modo assistido.');
+    cotaPdfPreview.innerHTML = 'Nenhuma leitura validada.';
   }
+};
+
+const handleApplyPdf = () => {
+  if (!lastParsedPdf || !lastParsedPdf.entries.length) {
+    updateCotaStatus('Nenhuma leitura validada para aplicar.');
+    return;
+  }
+  cotaEntries = lastParsedPdf.entries;
+  renderCotaTable(inputs.dataCalculo.value);
+  updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
 };
 
 const handleManualParse = () => {
@@ -1698,6 +1971,9 @@ const handleManualParse = () => {
     updateCotaStatus('Nenhuma competência identificada no texto colado.');
     return;
   }
+  lastParsedPdf = null;
+  cotaApplyPdfButton.disabled = true;
+  cotaPdfPreview.innerHTML = 'Pré-visualização indisponível no modo manual.';
   cotaEntries = entries;
   updateCotaStatus(`Leitura manual concluída: ${entries.length} lançamentos.`);
   renderCotaTable(inputs.dataCalculo.value);
@@ -1770,6 +2046,8 @@ inputs.dataCalculo.addEventListener('change', () => renderCotaTable(inputs.dataC
 inputs.cotaRegraPatro.addEventListener('change', updatePatroFactorVisibility);
 inputs.cotaPdf.addEventListener('change', (event) => handleCotaPdfUpload(event.target.files?.[0]));
 cotaParseManualButton.addEventListener('click', handleManualParse);
+cotaValidatePdfButton.addEventListener('click', handleValidatePdf);
+cotaApplyPdfButton.addEventListener('click', handleApplyPdf);
 cotaAddRowButton.addEventListener('click', addCotaRow);
 cotaRecalcButton.addEventListener('click', () => renderCotaTable(inputs.dataCalculo.value));
 cotaTableBody.addEventListener('input', handleCotaTableInput);
