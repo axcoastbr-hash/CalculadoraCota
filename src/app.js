@@ -2098,6 +2098,16 @@ const handleApplyPdf = () => {
   updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
 };
 
+const handleApplyPdf = () => {
+  if (!lastParsedPdf || !lastParsedPdf.entries.length) {
+    updateCotaStatus('Nenhuma leitura validada para aplicar.');
+    return;
+  }
+  cotaEntries = lastParsedPdf.entries;
+  renderCotaTable(inputs.dataCalculo.value);
+  updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
+};
+
 const handleManualParse = () => {
   const text = inputs.cotaManualText.value.trim();
   if (!text) {
