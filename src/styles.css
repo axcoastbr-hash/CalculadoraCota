@@ -260,6 +260,11 @@ small {
   min-height: 120px;
 }
 
+.readout.is-scrollable {
+  max-height: 320px;
+  overflow: auto;
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -273,6 +278,26 @@ small {
 
 .table-wrapper {
   overflow-x: auto;
+}
+
+.preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.preview-table th,
+.preview-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.preview-table th {
+  color: var(--muted);
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .contrib-table {
