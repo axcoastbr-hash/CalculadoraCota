@@ -13,6 +13,8 @@ const NSUA = 13;
 const FCB = 0.9818;
 const OMEGA = 115;
 const INPC_KEYS = Object.keys(INPC_INDEX).sort();
+const INPC_MIN_KEY = INPC_KEYS[0];
+const INPC_MAX_KEY = INPC_KEYS[INPC_KEYS.length - 1];
 const YEAR_RANGE = {
   min: Number(INPC_RANGE.start.split('-')[0]),
   max: 2026
@@ -92,7 +94,10 @@ const downloadParecerButton = document.getElementById('download-parecer');
 const includeAuditCheckbox = document.getElementById('include-audit');
 const pdfWarning = document.getElementById('pdf-warning');
 const cotaPdfStatus = document.getElementById('cota-pdf-status');
+const cotaPdfPreview = document.getElementById('cota-pdf-preview');
 const cotaParseManualButton = document.getElementById('cota-parse-manual');
+const cotaValidatePdfButton = document.getElementById('cota-validate-pdf');
+const cotaApplyPdfButton = document.getElementById('cota-apply-pdf');
 const cotaAddRowButton = document.getElementById('cota-add-row');
 const cotaRecalcButton = document.getElementById('cota-recalc');
 const cotaTableBody = document.getElementById('cota-table-body');
@@ -118,6 +123,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 let cotaEntries = [];
 let cotaIdCounter = 1;
 let currentMode = 'vaeba';
+let lastParsedPdf = null;
+let cotaPdfFile = null;
 
 const parseCurrency = (value) => {
   if (!value) return 0;
@@ -136,6 +143,13 @@ const parseBrazilianNumber = (value) => {
   const normalized = value.toString().replace(/\s/g, '').replace(/\./g, '').replace(/,/g, '.');
   const parsed = Number.parseFloat(normalized);
   return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const parseMoneyPtBR = (value) => {
+  if (!value) return null;
+  const normalized = value.toString().replace(/\s/g, '').replace(/\./g, '').replace(/,/g, '.');
+  const parsed = Number.parseFloat(normalized);
+  return Number.isNaN(parsed) ? null : parsed;
 };
 
 const formatCurrencyInput = (raw) => {
@@ -282,21 +296,49 @@ const getNearestInpcKey = (key) => {
   return candidates.length ? candidates[candidates.length - 1] : null;
 };
 
-const getInpcIndex = (key, warnings, { allowFallback, label }) => {
-  if (INPC_INDEX[key]) return INPC_INDEX[key];
+const getInpcIndex = (key, { allowFallback = true } = {}) => {
+  if (!key) {
+    return { index: null, effectiveYYYYMM: null, clampedStart: false, clampedEnd: false, usedFallback: false };
+  }
+
+  let effectiveKey = key;
+  let clampedStart = false;
+  let clampedEnd = false;
+
+  if (key < INPC_MIN_KEY) {
+    effectiveKey = INPC_MIN_KEY;
+    clampedStart = true;
+  } else if (key > INPC_MAX_KEY) {
+    effectiveKey = INPC_MAX_KEY;
+    clampedEnd = true;
+  }
+
+  if (INPC_INDEX[effectiveKey]) {
+    return {
+      index: INPC_INDEX[effectiveKey],
+      effectiveYYYYMM: effectiveKey,
+      clampedStart,
+      clampedEnd,
+      usedFallback: false
+    };
+  }
+
   if (!allowFallback) {
-    warnings.push(`Competência ${label} ${key} não encontrada na série INPC.`);
-    return null;
+    return { index: null, effectiveYYYYMM: effectiveKey, clampedStart, clampedEnd, usedFallback: false };
   }
-  const fallbackKey = getNearestInpcKey(key);
+
+  const fallbackKey = getNearestInpcKey(effectiveKey);
   if (fallbackKey) {
-    warnings.push(
-      `Competência ${label} ${key} fora da série. Usado INPC mais recente disponível (${fallbackKey}).`
-    );
-    return INPC_INDEX[fallbackKey];
+    return {
+      index: INPC_INDEX[fallbackKey],
+      effectiveYYYYMM: fallbackKey,
+      clampedStart,
+      clampedEnd,
+      usedFallback: true
+    };
   }
-  warnings.push(`Competência ${label} ${key} não encontrada na série INPC.`);
-  return null;
+
+  return { index: null, effectiveYYYYMM: null, clampedStart, clampedEnd, usedFallback: false };
 };
 
 const getCurrencyByCompetence = (year, month) => {
@@ -392,13 +434,10 @@ const runGoldenTest = () => {
   const idade = getAge(nascimento, dataCalculo);
   const competenciaBase = parseCompetencia('06/2024');
   const competenciaFinal = parseCompetencia('08/2024');
-  const warnings = [];
-  const inpcBase = competenciaBase
-    ? getInpcIndex(competenciaBase.key, warnings, { allowFallback: false, label: 'base' })
-    : null;
-  const inpcFinal = competenciaFinal
-    ? getInpcIndex(competenciaFinal.key, warnings, { allowFallback: true, label: 'final' })
-    : null;
+  const inpcBaseInfo = competenciaBase ? getInpcIndex(competenciaBase.key, { allowFallback: false }) : null;
+  const inpcFinalInfo = competenciaFinal ? getInpcIndex(competenciaFinal.key, { allowFallback: true }) : null;
+  const inpcBase = inpcBaseInfo?.index ?? null;
+  const inpcFinal = inpcFinalInfo?.index ?? null;
   const fatcor = inpcBase && inpcFinal ? inpcFinal / inpcBase : 0;
   const rubricas = [349.11, 789.63, 1029.13, 312.17, 2.96];
   const totalRubricas = rubricas.reduce((sum, value) => sum + value, 0);
@@ -550,19 +589,13 @@ const applyPatrocinadoraRule = (entries, rule, factor) => {
   return [...baseEntries, ...derived];
 };
 
-const computeCotaEntryMetrics = (entry, { dataCalculo, competenciaFinal, warnings }) => {
+const computeCotaEntryMetrics = (entry, { dataCalculo, inpcFinalIndex, inpcFinalKey }) => {
   const competenceKey = entry.competence;
   const conversion = convertToBRL(entry.amountNominal, competenceKey);
-  const baseKey =
-    competenceKey && competenceKey < '1994-01' ? '1994-01' : competenceKey || '1994-01';
-  if (competenceKey && competenceKey < '1994-01') {
-    warnings.push(
-      `Competência ${competenceKey} anterior a 1994-01: INPC aplicado a partir de 1994-01.`
-    );
-  }
-  const inpcBase = getInpcIndex(baseKey, warnings, { allowFallback: false, label: 'base' });
-  const inpcFinal = getInpcIndex(competenciaFinal, warnings, { allowFallback: true, label: 'final' });
-  const fatcor = inpcBase && inpcFinal ? inpcFinal / inpcBase : 0;
+  const baseKey = competenceKey && competenceKey < INPC_MIN_KEY ? INPC_MIN_KEY : competenceKey || INPC_MIN_KEY;
+  const inpcBaseInfo = getInpcIndex(baseKey, { allowFallback: false });
+  const inpcBase = inpcBaseInfo.index;
+  const fatcor = inpcBase && inpcFinalIndex ? inpcFinalIndex / inpcBase : 0;
 
   const [yearRaw, monthRaw] = competenceKey.split('-');
   const competenceDate = new Date(Number(yearRaw), Number(monthRaw) - 1, 15);
@@ -575,12 +608,14 @@ const computeCotaEntryMetrics = (entry, { dataCalculo, competenciaFinal, warning
   return {
     conversion,
     inpcBase,
-    inpcFinal,
+    inpcFinal: inpcFinalIndex,
     fatcor,
     fjur,
     tYears,
     corrected,
-    updated
+    updated,
+    inpcBaseKey: baseKey,
+    inpcFinalKey
   };
 };
 
@@ -597,8 +632,10 @@ const renderCotaTable = (dataCalculo) => {
     cotaTableBody.innerHTML = '<tr><td colspan="9">Nenhuma contribuição carregada.</td></tr>';
     return;
   }
-  const competenciaFinal = getCotaFinalCompetence(dataCalculo) ?? '1994-01';
-  const warnings = [];
+  const competenciaFinalInput = getCotaFinalCompetence(dataCalculo) ?? INPC_MIN_KEY;
+  const inpcFinalInfo = getInpcIndex(competenciaFinalInput, { allowFallback: true });
+  const inpcFinalIndex = inpcFinalInfo.index;
+  const competenciaFinal = inpcFinalInfo.effectiveYYYYMM ?? INPC_MIN_KEY;
   cotaEntries.forEach((entry) => {
     const row = document.createElement('tr');
     if (!entry.competence) {
@@ -613,7 +650,11 @@ const renderCotaTable = (dataCalculo) => {
       cotaTableBody.appendChild(row);
       return;
     }
-    const metrics = computeCotaEntryMetrics(entry, { dataCalculo, competenciaFinal, warnings });
+    const metrics = computeCotaEntryMetrics(entry, {
+      dataCalculo,
+      inpcFinalIndex,
+      inpcFinalKey: competenciaFinal
+    });
     row.innerHTML = `
       <td><input type="month" data-field="competence" data-id="${entry.id}" value="${entry.competence}" /></td>
       <td>${renderCotaTypeSelect(entry)}</td>
@@ -645,11 +686,25 @@ Competência inicial: ${data.competenciaInicial || '—'}
 Competência final: ${data.competenciaFinal || '—'}
 
 Parâmetros:
-INPC: série 1994-01..2025-11
+INPC: série ${data.inpcPolicy?.range ?? '—'}
 Taxa real anual: ${formatPercent(COTA_REAL_RATE)}
 Capitalização: (1+i)^(dias/365,25)
 Regra patrocinadora: ${data.regraPatro}
 Política pré-Real: conversão para BRL via CR$ e divisão por 2.750
+
+Política INPC (consolidada):
+Faixa embutida: ${data.inpcPolicy?.range ?? '—'}
+Competência final informada: ${data.inpcPolicy?.finalInput ?? '—'}
+Competência final usada: ${data.inpcPolicy?.finalUsed ?? '—'}
+INPC final usado: ${data.inpcPolicy?.finalIndex ? formatNumber(data.inpcPolicy.finalIndex, 4) : '—'}
+Ancoragem pré-1994: ${data.inpcPolicy?.pre1994Count ?? 0} lançamento(s) (base efetiva ${data.inpcPolicy?.anchoredBase ?? '—'})
+Pós-série: ${data.inpcPolicy?.postSeriesCount ?? 0} lançamento(s)
+Política aplicada: ${[
+  data.inpcPolicy?.pre1994Count ? 'ancoragem em 1994-01' : null,
+  data.inpcPolicy?.clampedFinal ? 'clamp no último índice' : null
+]
+  .filter(Boolean)
+  .join(' | ') || 'sem ajustes'}
 
 Totais:
 Total nominal (BRL): ${formatCurrency.format(data.totalNominal)}
@@ -722,12 +777,12 @@ const calculateCota = () => {
   const sexoLabel = sexo === 'F' ? 'Feminino' : sexo === 'M' ? 'Masculino' : '—';
   const nascimento = inputs.nascimento.value;
   const dataCalculo = inputs.dataCalculo.value;
-  const competenciaFinal = getCotaFinalCompetence(dataCalculo);
+  const competenciaFinalInput = getCotaFinalCompetence(dataCalculo);
 
   if (!dataCalculo) {
     errors.push('Data do cálculo não informada.');
   }
-  if (!competenciaFinal) {
+  if (!competenciaFinalInput) {
     errors.push('Competência final inválida.');
   }
 
@@ -743,7 +798,7 @@ const calculateCota = () => {
     errors.push('Nenhuma competência encontrada para iniciar a acumulação.');
   }
 
-  if (competenciaInicial && competenciaFinal && competenciaFinal < competenciaInicial) {
+  if (competenciaInicial && competenciaFinalInput && competenciaFinalInput < competenciaInicial) {
     errors.push('Competência final não pode ser anterior à inicial.');
   }
 
@@ -762,7 +817,7 @@ const calculateCota = () => {
     (entry) =>
       entry.competence &&
       entry.competence >= competenciaInicial &&
-      entry.competence <= competenciaFinal
+      entry.competence <= competenciaFinalInput
   );
 
   if (!entries.length) {
@@ -776,14 +831,32 @@ const calculateCota = () => {
     return;
   }
 
+  const inpcFinalInfo = getInpcIndex(competenciaFinalInput, { allowFallback: true });
+  const competenciaFinal = inpcFinalInfo.effectiveYYYYMM;
+  const inpcFinalIndex = inpcFinalInfo.index;
+
+  const pre1994Count = entries.filter((entry) => entry.competence < INPC_MIN_KEY).length;
+  const postSeriesCount = entries.filter((entry) => entry.competence > INPC_MAX_KEY).length;
+
+  if (pre1994Count || postSeriesCount || inpcFinalInfo.clampedEnd || !inpcFinalIndex) {
+    warnings.push(
+      `INPC aplicado com regras de ancoragem/clamp: faixa ${INPC_MIN_KEY}..${INPC_MAX_KEY}. ` +
+        'Verifique a política consolidada na auditoria.'
+    );
+  }
+
   const computedEntries = entries.map((entry) => {
-    const metrics = computeCotaEntryMetrics(entry, { dataCalculo, competenciaFinal, warnings });
+    const metrics = computeCotaEntryMetrics(entry, {
+      dataCalculo,
+      inpcFinalIndex,
+      inpcFinalKey: competenciaFinal
+    });
     return {
       ...entry,
       ...metrics
     };
   });
-  renderAlerts(warnings);
+  renderAlerts(warnings.slice(0, 1));
 
   const totalNominal = computedEntries.reduce((sum, entry) => sum + entry.conversion.brl, 0);
   const totalCorrigido = computedEntries.reduce((sum, entry) => sum + entry.corrected, 0);
@@ -828,16 +901,56 @@ const calculateCota = () => {
     entries: computedEntries,
     warnings,
     competenciasProcessadas: computedEntries.length,
-    beneficioEquivalente
+    beneficioEquivalente,
+    inpcPolicy: {
+      range: `${INPC_MIN_KEY}..${INPC_MAX_KEY}`,
+      finalInput: competenciaFinalInput,
+      finalUsed: competenciaFinal,
+      finalIndex: inpcFinalIndex,
+      pre1994Count,
+      postSeriesCount,
+      anchoredBase: INPC_MIN_KEY,
+      clampedFinal: inpcFinalInfo.clampedEnd
+    }
   };
 
   outputs.auditoria.textContent = buildCotaAudit(auditData);
   outputs.parecer.textContent = buildCotaParecer(auditData);
 };
 
-const MONTH_LABELS = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
+const MONTH_HEADERS = [
+  { key: '01', labels: ['JANEIRO', 'JAN'] },
+  { key: '02', labels: ['FEVEREIRO', 'FEV'] },
+  { key: '03', labels: ['MARÇO', 'MARCO', 'MAR'] },
+  { key: '04', labels: ['ABRIL', 'ABR'] },
+  { key: '05', labels: ['MAIO', 'MAI'] },
+  { key: '06', labels: ['JUNHO', 'JUN'] },
+  { key: '07', labels: ['JULHO', 'JUL'] },
+  { key: '08', labels: ['AGOSTO', 'AGO'] },
+  { key: '09', labels: ['SETEMBRO', 'SET'] },
+  { key: '10', labels: ['OUTUBRO', 'OUT'] },
+  { key: '11', labels: ['NOVEMBRO', 'NOV'] },
+  { key: '12', labels: ['DEZEMBRO', 'DEZ'] }
+];
 
-const groupTextItemsByLine = (items) => {
+const FOOTER_BLOCKLIST = [
+  'PARTICIPANTE',
+  'PATROCINADORA',
+  'MATRICULA',
+  'MATRÍCULA',
+  'INSCRICAO',
+  'INSCRIÇÃO',
+  'DATA',
+  'HORA',
+  'ARR',
+  'PAGINA',
+  'PÁGINA'
+];
+
+const TABLE_END_TOKENS = ['OBSERVACOES', 'OBSERVAÇÕES', 'HISTORICO', 'HISTÓRICO', 'ARR', 'PAGINA', 'PÁGINA', 'DATA'];
+const PDF_PARSE_DEBUG = false;
+
+const clusterByY = (items, yTolerance) => {
   const sorted = items
     .map((item) => ({
       text: item.str.trim(),
@@ -849,10 +962,9 @@ const groupTextItemsByLine = (items) => {
 
   const lines = [];
   let currentLine = null;
-  const tolerance = 2;
 
   sorted.forEach((item) => {
-    if (!currentLine || Math.abs(currentLine.y - item.y) > tolerance) {
+    if (!currentLine || Math.abs(currentLine.y - item.y) > yTolerance) {
       currentLine = { y: item.y, items: [item] };
       lines.push(currentLine);
     } else {
@@ -862,31 +974,73 @@ const groupTextItemsByLine = (items) => {
 
   return lines.map((line) => ({
     y: line.y,
-    items: line.items.sort((a, b) => a.x - b.x)
+    items: line.items.sort((a, b) => a.x - b.x),
+    text: line.items.map((item) => item.text).join(' ')
   }));
 };
 
-const detectMonthColumns = (lines) => {
+const normalizeHeaderText = (text) =>
+  text
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '');
+
+const headerHasAllMonths = (normalized) =>
+  MONTH_HEADERS.every((month) => month.labels.some((label) => normalized.includes(label)));
+
+const detectHeaderLine = (lines) => {
   for (const line of lines) {
-    const text = line.items.map((item) => item.text.toUpperCase()).join(' ');
-    const monthHits = MONTH_LABELS.filter((label) => text.includes(label));
-    if (monthHits.length >= 6) {
-      const monthMap = {};
-      line.items.forEach((item) => {
-        const upper = item.text.toUpperCase();
-        MONTH_LABELS.forEach((label, index) => {
-          if (upper.includes(label)) {
-            monthMap[index + 1] = item.x;
-          }
-        });
-        if (/13/.test(upper)) {
-          monthMap[13] = item.x;
-        }
-      });
-      return monthMap;
+    const normalized = normalizeHeaderText(line.text);
+    const hasAno = normalized.includes('ANO');
+    const has13 = normalized.includes('13') || normalized.includes('13O');
+    const hasAllMonths = headerHasAllMonths(normalized);
+    if (hasAno && hasAllMonths && has13) {
+      return line;
     }
   }
   return null;
+};
+
+const buildColumnMap = (headerLine) => {
+  const columns = [];
+  const headerItems = headerLine.items.map((item) => ({
+    text: normalizeHeaderText(item.text),
+    x: item.x
+  }));
+  const anoItem = headerItems.find((item) => item.text.includes('ANO'));
+  if (!anoItem) return null;
+  columns.push({ key: 'ano', x: anoItem.x });
+
+  for (const month of MONTH_HEADERS) {
+    const monthItem = headerItems.find((item) =>
+      month.labels.some((label) => item.text.includes(label))
+    );
+    if (!monthItem) return null;
+    columns.push({ key: month.key, x: monthItem.x });
+  }
+
+  const thirteenthItem = headerItems.find((item) => item.text.includes('13'));
+  if (!thirteenthItem) return null;
+  columns.push({ key: '13', x: thirteenthItem.x });
+
+  return columns.sort((a, b) => a.x - b.x);
+};
+
+const median = (values) => {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+};
+
+const computeMaxDx = (columns) => {
+  const distances = [];
+  for (let i = 1; i < columns.length; i += 1) {
+    distances.push(columns[i].x - columns[i - 1].x);
+  }
+  const medianDistance = median(distances);
+  return medianDistance ? medianDistance / 2 : 0;
 };
 
 const inferLineType = (text) => {
@@ -897,63 +1051,226 @@ const inferLineType = (text) => {
   return 'PARTICIPANTE_NORMAL';
 };
 
-const mapItemToMonth = (x, monthMap) => {
-  const entries = Object.entries(monthMap).map(([month, pos]) => ({
-    month: Number(month),
-    pos
-  }));
-  entries.sort((a, b) => a.pos - b.pos);
-  let closest = entries[0];
-  entries.forEach((entry) => {
-    if (Math.abs(entry.pos - x) < Math.abs(closest.pos - x)) {
-      closest = entry;
+const mapLineItemsToColumns = (items, columns, maxDx) => {
+  const moneyPattern = /-?\d{1,3}(?:\.\d{3})*,\d{2}/;
+  const bestByColumn = {};
+  items.forEach((item) => {
+    const text = item.text;
+    if (!moneyPattern.test(text)) return;
+    if (text.includes('/') || (text.includes('-') && !text.startsWith('-'))) return;
+    let nearest = null;
+    columns.forEach((column) => {
+      const dx = Math.abs(item.x - column.x);
+      if (!nearest || dx < nearest.dx) {
+        nearest = { key: column.key, dx };
+      }
+    });
+    if (!nearest || nearest.dx > maxDx) return;
+    if (nearest.key === 'ano') return;
+    if (!bestByColumn[nearest.key] || nearest.dx < bestByColumn[nearest.key].dx) {
+      bestByColumn[nearest.key] = {
+        dx: nearest.dx,
+        raw: text,
+        value: parseMoneyPtBR(text)
+      };
     }
   });
-  return closest.month;
+  return bestByColumn;
+};
+
+const extractRowsFromLines = ({ lines, headerLine, columns, maxDx }) => {
+  const yearPattern = /^(19|20)\d{2}$/;
+  const headerIndex = lines.indexOf(headerLine);
+  if (headerIndex < 0) return [];
+  const rows = [];
+  let currentRow = null;
+  const stats = {
+    discarded: 0,
+    outsideWindow: 0,
+    nonYear: 0,
+    incomplete: 0,
+    years: []
+  };
+
+  for (let i = headerIndex + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    const normalizedText = normalizeHeaderText(line.text);
+    if (TABLE_END_TOKENS.some((token) => normalizedText.includes(token))) {
+      break;
+    }
+    if (FOOTER_BLOCKLIST.some((token) => normalizedText.includes(token))) {
+      stats.discarded += 1;
+      continue;
+    }
+    const leftmost = line.items[0];
+    const yearMatch = leftmost?.text?.match(yearPattern);
+    if (yearMatch) {
+      if (currentRow) rows.push(currentRow);
+      currentRow = {
+        year: Number(yearMatch[0]),
+        items: [...line.items],
+        lineText: line.text
+      };
+      stats.years.push(Number(yearMatch[0]));
+      continue;
+    }
+    if (currentRow) {
+      currentRow.items.push(...line.items);
+      currentRow.lineText = `${currentRow.lineText} ${line.text}`.trim();
+    } else {
+      stats.nonYear += 1;
+    }
+  }
+  if (currentRow) rows.push(currentRow);
+
+  const formatted = rows
+    .map((row) => {
+      const normalizedText = normalizeHeaderText(row.lineText);
+      if (FOOTER_BLOCKLIST.some((token) => normalizedText.includes(token))) return null;
+      const bestByColumn = mapLineItemsToColumns(row.items, columns, maxDx);
+      const months = {};
+      const raw = {};
+      ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13'].forEach(
+        (key) => {
+          const entry = bestByColumn[key];
+          months[key] = entry?.value ?? null;
+          raw[key] = entry?.raw ?? null;
+        }
+      );
+      const filled = Object.values(months).filter((value) => value !== null).length;
+      if (filled < 13) {
+        stats.incomplete += 1;
+      }
+      return {
+        year: row.year,
+        months,
+        raw,
+        confidence: { filled, missing: 13 - filled },
+        lineText: row.lineText
+      };
+    })
+    .filter(Boolean);
+
+  if (PDF_PARSE_DEBUG) {
+    console.info('[PDF] Linhas não iniciadas por ano:', stats.nonYear);
+    console.info('[PDF] Linhas incompletas:', stats.incomplete);
+  }
+  return { rows: formatted, stats };
+};
+
+const consolidateRows = (rows) => {
+  const byYear = new Map();
+  rows.forEach((row) => {
+    const existing = byYear.get(row.year);
+    if (!existing || row.confidence.filled > existing.confidence.filled) {
+      byYear.set(row.year, row);
+    }
+  });
+  return Array.from(byYear.values()).sort((a, b) => a.year - b.year);
+};
+
+const evaluateRows = (rows) => {
+  const warnings = [];
+  const errors = [];
+  if (!rows.length) {
+    errors.push('Nenhuma linha de ano foi identificada na tabela.');
+    return { warnings, errors };
+  }
+
+  const incompleteRows = rows.filter((row) => row.confidence.filled < 13);
+  if (incompleteRows.length) {
+    errors.push('A tabela extraída está incompleta (faltam meses/13º em alguns anos).');
+  }
+
+  const years = rows.map((row) => row.year);
+  const outOfRange = years.filter((year) => year < 1900 || year > 2100);
+  if (outOfRange.length) {
+    errors.push('Foram encontrados anos fora do intervalo esperado.');
+  }
+
+  const notIncreasing = rows.some((row, index) => index > 0 && row.year <= rows[index - 1].year);
+  if (notIncreasing) {
+    warnings.push('Os anos não estão estritamente crescentes; confira a tabela.');
+  }
+
+  const outlierRows = rows.filter((row) => row.year >= 1995).filter((row) => {
+    const hugeValues = Object.values(row.months).filter((value) => value !== null && value >= 1000000);
+    return hugeValues.length >= 4;
+  });
+  if (outlierRows.length) {
+    warnings.push(
+      'Valores muito altos detectados em anos pós-Real. Verifique se a leitura ficou alinhada.'
+    );
+  }
+
+  return { warnings, errors };
 };
 
 const parsePdfContributions = async (file) => {
   const data = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data }).promise;
-  const entries = [];
+  const tolerances = [1.5, 2, 2.5, 3];
+  const candidates = [];
 
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    const lines = groupTextItemsByLine(textContent.items);
-    const monthMap = detectMonthColumns(lines);
-    if (!monthMap) continue;
-
-    lines.forEach((line) => {
-      const lineText = line.items.map((item) => item.text).join(' ');
-      if (lineText.toUpperCase().includes('TOTAL')) return;
-      const yearMatch = lineText.match(/\b(19\d{2}|20\d{2})\b/);
-      if (!yearMatch) return;
-      const year = Number(yearMatch[1]);
-      const type = inferLineType(lineText);
-
-      line.items.forEach((item) => {
-        if (!/[\d.,]/.test(item.text)) return;
-        const value = parseBrazilianNumber(item.text);
-        if (!value) return;
-        const month = mapItemToMonth(item.x, monthMap);
-        if (!month || month > 13) return;
-        const competence = `${year}-${String(month === 13 ? 12 : month).padStart(2, '0')}`;
-        entries.push(
-          createCotaEntry({
-            competence,
-            type,
-            amountNominal: value,
-            is13: month === 13,
-            source: 'pdf',
-            notes: `Página ${pageNumber}`
-          })
-        );
-      });
+  for (const tolerance of tolerances) {
+    const rows = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const textContent = await page.getTextContent({ disableCombineTextItems: false });
+      const lines = clusterByY(textContent.items, tolerance);
+      const headerLine = detectHeaderLine(lines);
+      if (!headerLine) continue;
+      const columns = buildColumnMap(headerLine);
+      if (!columns) continue;
+      const maxDx = computeMaxDx(columns);
+      if (!maxDx) continue;
+      const pageResult = extractRowsFromLines({ lines, headerLine, columns, maxDx });
+      if (PDF_PARSE_DEBUG) {
+        console.info('[PDF] Cabeçalho detectado na página', pageNumber);
+        console.info('[PDF] Linhas de ano encontradas:', pageResult.rows.map((row) => row.year).join(', '));
+        console.info('[PDF] Linhas incompletas:', pageResult.stats.incomplete);
+      }
+      pageResult.rows.forEach((row) => rows.push({ ...row, page: pageNumber }));
+    }
+    const consolidated = consolidateRows(rows);
+    const filledCount = consolidated.reduce((sum, row) => sum + row.confidence.filled, 0);
+    const completeCount = consolidated.filter((row) => row.confidence.filled === 13).length;
+    candidates.push({
+      tolerance,
+      rows: consolidated,
+      score: completeCount * 20 + filledCount
     });
   }
 
-  return entries;
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0] || { rows: [] };
+  const { warnings, errors } = evaluateRows(best.rows);
+
+  if (errors.length) {
+    return { entries: [], rows: best.rows, warnings, errors };
+  }
+
+  const entries = [];
+  best.rows.forEach((row) => {
+    const type = inferLineType(row.lineText);
+    Object.entries(row.months).forEach(([monthKey, value]) => {
+      if (value === null) return;
+      const is13 = monthKey === '13';
+      const competence = `${row.year}-${String(is13 ? 12 : Number(monthKey)).padStart(2, '0')}`;
+      entries.push(
+        createCotaEntry({
+          competence,
+          type,
+          amountNominal: value,
+          is13,
+          source: 'pdf',
+          notes: `Ano ${row.year}`
+        })
+      );
+    });
+  });
+
+  return { entries, rows: best.rows, warnings, errors };
 };
 
 const parseManualTextContributions = (text) => {
@@ -988,9 +1305,60 @@ const parseManualTextContributions = (text) => {
   return entries;
 };
 
+const buildPreviewTable = (rows) => {
+  if (!rows.length) return 'Nenhuma leitura validada.';
+  const headerCells = [
+    'Ano',
+    'Jan',
+    'Fev',
+    'Mar',
+    'Abr',
+    'Mai',
+    'Jun',
+    'Jul',
+    'Ago',
+    'Set',
+    'Out',
+    'Nov',
+    'Dez',
+    '13º'
+  ]
+    .map((label) => `<th>${label}</th>`)
+    .join('');
+
+  const bodyRows = rows
+    .map((row) => {
+      const cells = [
+        row.year,
+        row.months['01'],
+        row.months['02'],
+        row.months['03'],
+        row.months['04'],
+        row.months['05'],
+        row.months['06'],
+        row.months['07'],
+        row.months['08'],
+        row.months['09'],
+        row.months['10'],
+        row.months['11'],
+        row.months['12'],
+        row.months['13']
+      ]
+        .map((value, index) =>
+          index === 0 ? `<td>${value}</td>` : `<td>${value === null ? '—' : formatNumber(value)}</td>`
+        )
+        .join('');
+      return `<tr>${cells}</tr>`;
+    })
+    .join('');
+
+  return `<table class="preview-table"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>`;
+};
+
 const renderAlerts = (warnings) => {
   outputs.alertas.innerHTML = '';
-  warnings.forEach((warning) => {
+  const uniqueWarnings = Array.from(new Set(warnings));
+  uniqueWarnings.forEach((warning) => {
     const div = document.createElement('div');
     div.className = 'alert';
     div.textContent = warning;
@@ -1091,12 +1459,25 @@ const calculateVaeba = () => {
     errors.push('Competência final INPC inválida.');
   }
 
-  const inpcBase = competenciaBase
-    ? getInpcIndex(competenciaBase.key, warnings, { allowFallback: false, label: 'base' })
+  const inpcBaseInfo = competenciaBase
+    ? getInpcIndex(competenciaBase.key, { allowFallback: false })
     : null;
-  const inpcFinal = competenciaFinal
-    ? getInpcIndex(competenciaFinal.key, warnings, { allowFallback: true, label: 'final' })
+  const inpcFinalInfo = competenciaFinal
+    ? getInpcIndex(competenciaFinal.key, { allowFallback: true })
     : null;
+  if (competenciaBase && !inpcBaseInfo?.index) {
+    warnings.push(`Competência base ${competenciaBase.key} não encontrada na série INPC.`);
+  }
+  if (competenciaFinal && !inpcFinalInfo?.index) {
+    warnings.push(`Competência final ${competenciaFinal.key} não encontrada na série INPC.`);
+  }
+  if (inpcFinalInfo?.clampedEnd && competenciaFinal) {
+    warnings.push(
+      `Competência final ${competenciaFinal.key} fora da série. Usado INPC mais recente (${INPC_MAX_KEY}).`
+    );
+  }
+  const inpcBase = inpcBaseInfo?.index ?? null;
+  const inpcFinal = inpcFinalInfo?.index ?? null;
 
   let fatcor = 0;
   if (inpcBase && inpcFinal) {
@@ -1235,6 +1616,11 @@ const resetForm = () => {
   outputs.parecer.textContent = 'Nenhum cálculo realizado.';
   setPdfWarning('');
   cotaEntries = [];
+  lastParsedPdf = null;
+  cotaPdfFile = null;
+  cotaPdfPreview.innerHTML = 'Nenhuma leitura validada.';
+  cotaApplyPdfButton.disabled = true;
+  updateCotaStatus('Nenhum arquivo carregado.');
   cotaTableBody.innerHTML = '';
   cotaPdfStatus.textContent = 'Nenhum arquivo carregado.';
 };
@@ -1671,20 +2057,51 @@ const updateCotaStatus = (message) => {
 
 const handleCotaPdfUpload = async (file) => {
   if (!file) return;
-  updateCotaStatus('Lendo PDF...');
+  cotaPdfFile = file;
+  lastParsedPdf = null;
+  cotaApplyPdfButton.disabled = true;
+  cotaPdfPreview.innerHTML = 'Nenhuma leitura validada.';
+  updateCotaStatus('Arquivo carregado. Clique em “Validar leitura” para conferir a extração.');
+};
+
+const handleValidatePdf = async () => {
+  if (!cotaPdfFile) {
+    updateCotaStatus('Carregue um PDF antes de validar a leitura.');
+    return;
+  }
+  updateCotaStatus('Validando leitura do PDF...');
+  cotaPdfPreview.innerHTML = 'Processando...';
+  cotaApplyPdfButton.disabled = true;
   try {
-    const entries = await parsePdfContributions(file);
-    if (!entries.length) {
-      updateCotaStatus('Não foi possível identificar contribuições no PDF. Use o modo assistido.');
+    const result = await parsePdfContributions(cotaPdfFile);
+    lastParsedPdf = result;
+    cotaPdfPreview.innerHTML = buildPreviewTable(result.rows);
+    if (result.errors.length) {
+      updateCotaStatus(
+        `Não foi possível extrair a tabela com confiança. ${result.errors.join(' ')}`
+      );
       return;
     }
-    cotaEntries = entries;
-    updateCotaStatus(`Leitura concluída: ${entries.length} lançamentos identificados.`);
-    renderCotaTable(inputs.dataCalculo.value);
+    const warningText = result.warnings.length ? ` Avisos: ${result.warnings.join(' ')}` : '';
+    updateCotaStatus(
+      `Leitura validada: ${result.entries.length} lançamentos identificados.${warningText}`
+    );
+    cotaApplyPdfButton.disabled = false;
   } catch (error) {
     console.error(error);
-    updateCotaStatus('Falha ao ler o PDF. Tente o modo assistido ou ajuste manual.');
+    updateCotaStatus('Falha ao validar o PDF. Tente novamente ou use o modo assistido.');
+    cotaPdfPreview.innerHTML = 'Nenhuma leitura validada.';
   }
+};
+
+const handleApplyPdf = () => {
+  if (!lastParsedPdf || !lastParsedPdf.entries.length) {
+    updateCotaStatus('Nenhuma leitura validada para aplicar.');
+    return;
+  }
+  cotaEntries = lastParsedPdf.entries;
+  renderCotaTable(inputs.dataCalculo.value);
+  updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
 };
 
 const handleManualParse = () => {
@@ -1698,6 +2115,9 @@ const handleManualParse = () => {
     updateCotaStatus('Nenhuma competência identificada no texto colado.');
     return;
   }
+  lastParsedPdf = null;
+  cotaApplyPdfButton.disabled = true;
+  cotaPdfPreview.innerHTML = 'Pré-visualização indisponível no modo manual.';
   cotaEntries = entries;
   updateCotaStatus(`Leitura manual concluída: ${entries.length} lançamentos.`);
   renderCotaTable(inputs.dataCalculo.value);
@@ -1770,6 +2190,8 @@ inputs.dataCalculo.addEventListener('change', () => renderCotaTable(inputs.dataC
 inputs.cotaRegraPatro.addEventListener('change', updatePatroFactorVisibility);
 inputs.cotaPdf.addEventListener('change', (event) => handleCotaPdfUpload(event.target.files?.[0]));
 cotaParseManualButton.addEventListener('click', handleManualParse);
+cotaValidatePdfButton.addEventListener('click', handleValidatePdf);
+cotaApplyPdfButton.addEventListener('click', handleApplyPdf);
 cotaAddRowButton.addEventListener('click', addCotaRow);
 cotaRecalcButton.addEventListener('click', () => renderCotaTable(inputs.dataCalculo.value));
 cotaTableBody.addEventListener('input', handleCotaTableInput);
