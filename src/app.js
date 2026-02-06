@@ -1074,6 +1074,82 @@ const mapLineItemsToColumns = (items, columns, maxDx) => {
         value: parseMoneyPtBR(text)
       };
     }
+  }
+  if (currentRow) rows.push(currentRow);
+
+  const formatted = rows
+    .map((row) => {
+      const normalizedText = normalizeHeaderText(row.lineText);
+      if (FOOTER_BLOCKLIST.some((token) => normalizedText.includes(token))) return null;
+      const bestByColumn = mapLineItemsToColumns(row.items, columns, maxDx);
+      const months = {};
+      const raw = {};
+      ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13'].forEach(
+        (key) => {
+          const entry = bestByColumn[key];
+          months[key] = entry?.value ?? null;
+          raw[key] = entry?.raw ?? null;
+        }
+      );
+      const filled = Object.values(months).filter((value) => value !== null).length;
+      if (filled < 13) {
+        stats.incomplete += 1;
+      }
+      return {
+        year: row.year,
+        months,
+        raw,
+        confidence: { filled, missing: 13 - filled },
+        lineText: row.lineText
+      };
+    })
+    .filter(Boolean);
+
+  if (PDF_PARSE_DEBUG) {
+    console.info('[PDF] Linhas não iniciadas por ano:', stats.nonYear);
+    console.info('[PDF] Linhas incompletas:', stats.incomplete);
+  }
+  return { rows: formatted, stats };
+};
+
+const consolidateRows = (rows) => {
+  const byYear = new Map();
+  rows.forEach((row) => {
+    const existing = byYear.get(row.year);
+    if (!existing || row.confidence.filled > existing.confidence.filled) {
+      byYear.set(row.year, row);
+    }
+  });
+  return Array.from(byYear.values()).sort((a, b) => a.year - b.year);
+};
+
+const evaluateRows = (rows) => {
+  const warnings = [];
+  const errors = [];
+  if (!rows.length) {
+    errors.push('Nenhuma linha de ano foi identificada na tabela.');
+    return { warnings, errors };
+  }
+
+  const incompleteRows = rows.filter((row) => row.confidence.filled < 13);
+  if (incompleteRows.length) {
+    errors.push('A tabela extraída está incompleta (faltam meses/13º em alguns anos).');
+  }
+
+  const years = rows.map((row) => row.year);
+  const outOfRange = years.filter((year) => year < 1900 || year > 2100);
+  if (outOfRange.length) {
+    errors.push('Foram encontrados anos fora do intervalo esperado.');
+  }
+
+  const notIncreasing = rows.some((row, index) => index > 0 && row.year <= rows[index - 1].year);
+  if (notIncreasing) {
+    warnings.push('Os anos não estão estritamente crescentes; confira a tabela.');
+  }
+
+  const outlierRows = rows.filter((row) => row.year >= 1995).filter((row) => {
+    const hugeValues = Object.values(row.months).filter((value) => value !== null && value >= 1000000);
+    return hugeValues.length >= 4;
   });
   return bestByColumn;
 };
