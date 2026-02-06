@@ -13,6 +13,8 @@ const NSUA = 13;
 const FCB = 0.9818;
 const OMEGA = 115;
 const INPC_KEYS = Object.keys(INPC_INDEX).sort();
+const INPC_MIN_KEY = INPC_KEYS[0];
+const INPC_MAX_KEY = INPC_KEYS[INPC_KEYS.length - 1];
 const YEAR_RANGE = {
   min: Number(INPC_RANGE.start.split('-')[0]),
   max: 2026
@@ -294,21 +296,49 @@ const getNearestInpcKey = (key) => {
   return candidates.length ? candidates[candidates.length - 1] : null;
 };
 
-const getInpcIndex = (key, warnings, { allowFallback, label }) => {
-  if (INPC_INDEX[key]) return INPC_INDEX[key];
+const getInpcIndex = (key, { allowFallback = true } = {}) => {
+  if (!key) {
+    return { index: null, effectiveYYYYMM: null, clampedStart: false, clampedEnd: false, usedFallback: false };
+  }
+
+  let effectiveKey = key;
+  let clampedStart = false;
+  let clampedEnd = false;
+
+  if (key < INPC_MIN_KEY) {
+    effectiveKey = INPC_MIN_KEY;
+    clampedStart = true;
+  } else if (key > INPC_MAX_KEY) {
+    effectiveKey = INPC_MAX_KEY;
+    clampedEnd = true;
+  }
+
+  if (INPC_INDEX[effectiveKey]) {
+    return {
+      index: INPC_INDEX[effectiveKey],
+      effectiveYYYYMM: effectiveKey,
+      clampedStart,
+      clampedEnd,
+      usedFallback: false
+    };
+  }
+
   if (!allowFallback) {
-    warnings.push(`Competência ${label} ${key} não encontrada na série INPC.`);
-    return null;
+    return { index: null, effectiveYYYYMM: effectiveKey, clampedStart, clampedEnd, usedFallback: false };
   }
-  const fallbackKey = getNearestInpcKey(key);
+
+  const fallbackKey = getNearestInpcKey(effectiveKey);
   if (fallbackKey) {
-    warnings.push(
-      `Competência ${label} ${key} fora da série. Usado INPC mais recente disponível (${fallbackKey}).`
-    );
-    return INPC_INDEX[fallbackKey];
+    return {
+      index: INPC_INDEX[fallbackKey],
+      effectiveYYYYMM: fallbackKey,
+      clampedStart,
+      clampedEnd,
+      usedFallback: true
+    };
   }
-  warnings.push(`Competência ${label} ${key} não encontrada na série INPC.`);
-  return null;
+
+  return { index: null, effectiveYYYYMM: null, clampedStart, clampedEnd, usedFallback: false };
 };
 
 const getCurrencyByCompetence = (year, month) => {
@@ -404,13 +434,10 @@ const runGoldenTest = () => {
   const idade = getAge(nascimento, dataCalculo);
   const competenciaBase = parseCompetencia('06/2024');
   const competenciaFinal = parseCompetencia('08/2024');
-  const warnings = [];
-  const inpcBase = competenciaBase
-    ? getInpcIndex(competenciaBase.key, warnings, { allowFallback: false, label: 'base' })
-    : null;
-  const inpcFinal = competenciaFinal
-    ? getInpcIndex(competenciaFinal.key, warnings, { allowFallback: true, label: 'final' })
-    : null;
+  const inpcBaseInfo = competenciaBase ? getInpcIndex(competenciaBase.key, { allowFallback: false }) : null;
+  const inpcFinalInfo = competenciaFinal ? getInpcIndex(competenciaFinal.key, { allowFallback: true }) : null;
+  const inpcBase = inpcBaseInfo?.index ?? null;
+  const inpcFinal = inpcFinalInfo?.index ?? null;
   const fatcor = inpcBase && inpcFinal ? inpcFinal / inpcBase : 0;
   const rubricas = [349.11, 789.63, 1029.13, 312.17, 2.96];
   const totalRubricas = rubricas.reduce((sum, value) => sum + value, 0);
@@ -562,19 +589,13 @@ const applyPatrocinadoraRule = (entries, rule, factor) => {
   return [...baseEntries, ...derived];
 };
 
-const computeCotaEntryMetrics = (entry, { dataCalculo, competenciaFinal, warnings }) => {
+const computeCotaEntryMetrics = (entry, { dataCalculo, inpcFinalIndex, inpcFinalKey }) => {
   const competenceKey = entry.competence;
   const conversion = convertToBRL(entry.amountNominal, competenceKey);
-  const baseKey =
-    competenceKey && competenceKey < '1994-01' ? '1994-01' : competenceKey || '1994-01';
-  if (competenceKey && competenceKey < '1994-01') {
-    warnings.push(
-      `Competência ${competenceKey} anterior a 1994-01: INPC aplicado a partir de 1994-01.`
-    );
-  }
-  const inpcBase = getInpcIndex(baseKey, warnings, { allowFallback: false, label: 'base' });
-  const inpcFinal = getInpcIndex(competenciaFinal, warnings, { allowFallback: true, label: 'final' });
-  const fatcor = inpcBase && inpcFinal ? inpcFinal / inpcBase : 0;
+  const baseKey = competenceKey && competenceKey < INPC_MIN_KEY ? INPC_MIN_KEY : competenceKey || INPC_MIN_KEY;
+  const inpcBaseInfo = getInpcIndex(baseKey, { allowFallback: false });
+  const inpcBase = inpcBaseInfo.index;
+  const fatcor = inpcBase && inpcFinalIndex ? inpcFinalIndex / inpcBase : 0;
 
   const [yearRaw, monthRaw] = competenceKey.split('-');
   const competenceDate = new Date(Number(yearRaw), Number(monthRaw) - 1, 15);
@@ -587,12 +608,14 @@ const computeCotaEntryMetrics = (entry, { dataCalculo, competenciaFinal, warning
   return {
     conversion,
     inpcBase,
-    inpcFinal,
+    inpcFinal: inpcFinalIndex,
     fatcor,
     fjur,
     tYears,
     corrected,
-    updated
+    updated,
+    inpcBaseKey: baseKey,
+    inpcFinalKey
   };
 };
 
@@ -609,8 +632,10 @@ const renderCotaTable = (dataCalculo) => {
     cotaTableBody.innerHTML = '<tr><td colspan="9">Nenhuma contribuição carregada.</td></tr>';
     return;
   }
-  const competenciaFinal = getCotaFinalCompetence(dataCalculo) ?? '1994-01';
-  const warnings = [];
+  const competenciaFinalInput = getCotaFinalCompetence(dataCalculo) ?? INPC_MIN_KEY;
+  const inpcFinalInfo = getInpcIndex(competenciaFinalInput, { allowFallback: true });
+  const inpcFinalIndex = inpcFinalInfo.index;
+  const competenciaFinal = inpcFinalInfo.effectiveYYYYMM ?? INPC_MIN_KEY;
   cotaEntries.forEach((entry) => {
     const row = document.createElement('tr');
     if (!entry.competence) {
@@ -625,7 +650,11 @@ const renderCotaTable = (dataCalculo) => {
       cotaTableBody.appendChild(row);
       return;
     }
-    const metrics = computeCotaEntryMetrics(entry, { dataCalculo, competenciaFinal, warnings });
+    const metrics = computeCotaEntryMetrics(entry, {
+      dataCalculo,
+      inpcFinalIndex,
+      inpcFinalKey: competenciaFinal
+    });
     row.innerHTML = `
       <td><input type="month" data-field="competence" data-id="${entry.id}" value="${entry.competence}" /></td>
       <td>${renderCotaTypeSelect(entry)}</td>
@@ -657,11 +686,25 @@ Competência inicial: ${data.competenciaInicial || '—'}
 Competência final: ${data.competenciaFinal || '—'}
 
 Parâmetros:
-INPC: série 1994-01..2025-11
+INPC: série ${data.inpcPolicy?.range ?? '—'}
 Taxa real anual: ${formatPercent(COTA_REAL_RATE)}
 Capitalização: (1+i)^(dias/365,25)
 Regra patrocinadora: ${data.regraPatro}
 Política pré-Real: conversão para BRL via CR$ e divisão por 2.750
+
+Política INPC (consolidada):
+Faixa embutida: ${data.inpcPolicy?.range ?? '—'}
+Competência final informada: ${data.inpcPolicy?.finalInput ?? '—'}
+Competência final usada: ${data.inpcPolicy?.finalUsed ?? '—'}
+INPC final usado: ${data.inpcPolicy?.finalIndex ? formatNumber(data.inpcPolicy.finalIndex, 4) : '—'}
+Ancoragem pré-1994: ${data.inpcPolicy?.pre1994Count ?? 0} lançamento(s) (base efetiva ${data.inpcPolicy?.anchoredBase ?? '—'})
+Pós-série: ${data.inpcPolicy?.postSeriesCount ?? 0} lançamento(s)
+Política aplicada: ${[
+  data.inpcPolicy?.pre1994Count ? 'ancoragem em 1994-01' : null,
+  data.inpcPolicy?.clampedFinal ? 'clamp no último índice' : null
+]
+  .filter(Boolean)
+  .join(' | ') || 'sem ajustes'}
 
 Totais:
 Total nominal (BRL): ${formatCurrency.format(data.totalNominal)}
@@ -734,12 +777,12 @@ const calculateCota = () => {
   const sexoLabel = sexo === 'F' ? 'Feminino' : sexo === 'M' ? 'Masculino' : '—';
   const nascimento = inputs.nascimento.value;
   const dataCalculo = inputs.dataCalculo.value;
-  const competenciaFinal = getCotaFinalCompetence(dataCalculo);
+  const competenciaFinalInput = getCotaFinalCompetence(dataCalculo);
 
   if (!dataCalculo) {
     errors.push('Data do cálculo não informada.');
   }
-  if (!competenciaFinal) {
+  if (!competenciaFinalInput) {
     errors.push('Competência final inválida.');
   }
 
@@ -755,7 +798,7 @@ const calculateCota = () => {
     errors.push('Nenhuma competência encontrada para iniciar a acumulação.');
   }
 
-  if (competenciaInicial && competenciaFinal && competenciaFinal < competenciaInicial) {
+  if (competenciaInicial && competenciaFinalInput && competenciaFinalInput < competenciaInicial) {
     errors.push('Competência final não pode ser anterior à inicial.');
   }
 
@@ -774,7 +817,7 @@ const calculateCota = () => {
     (entry) =>
       entry.competence &&
       entry.competence >= competenciaInicial &&
-      entry.competence <= competenciaFinal
+      entry.competence <= competenciaFinalInput
   );
 
   if (!entries.length) {
@@ -788,8 +831,38 @@ const calculateCota = () => {
     return;
   }
 
+  const inpcFinalInfo = getInpcIndex(competenciaFinalInput, { allowFallback: true });
+  const competenciaFinal = inpcFinalInfo.effectiveYYYYMM;
+  const inpcFinalIndex = inpcFinalInfo.index;
+
+  const pre1994Count = entries.filter((entry) => entry.competence < INPC_MIN_KEY).length;
+  const postSeriesCount = entries.filter((entry) => entry.competence > INPC_MAX_KEY).length;
+
+  if (pre1994Count) {
+    warnings.push(
+      `Ancoragem pré-1994 aplicada: ${pre1994Count} lançamento(s) com INPC base ajustado para ${INPC_MIN_KEY}.`
+    );
+  }
+  if (inpcFinalInfo.clampedEnd) {
+    warnings.push(
+      `Competência final ${competenciaFinalInput} acima da série. Usada competência ${INPC_MAX_KEY}.`
+    );
+  }
+  if (!inpcFinalIndex) {
+    warnings.push('INPC final indisponível; verifique a competência final informada.');
+  }
+  if (postSeriesCount) {
+    warnings.push(
+      `Há ${postSeriesCount} lançamento(s) com competência acima da série INPC (${INPC_MAX_KEY}).`
+    );
+  }
+
   const computedEntries = entries.map((entry) => {
-    const metrics = computeCotaEntryMetrics(entry, { dataCalculo, competenciaFinal, warnings });
+    const metrics = computeCotaEntryMetrics(entry, {
+      dataCalculo,
+      inpcFinalIndex,
+      inpcFinalKey: competenciaFinal
+    });
     return {
       ...entry,
       ...metrics
@@ -840,7 +913,17 @@ const calculateCota = () => {
     entries: computedEntries,
     warnings,
     competenciasProcessadas: computedEntries.length,
-    beneficioEquivalente
+    beneficioEquivalente,
+    inpcPolicy: {
+      range: `${INPC_MIN_KEY}..${INPC_MAX_KEY}`,
+      finalInput: competenciaFinalInput,
+      finalUsed: competenciaFinal,
+      finalIndex: inpcFinalIndex,
+      pre1994Count,
+      postSeriesCount,
+      anchoredBase: INPC_MIN_KEY,
+      clampedFinal: inpcFinalInfo.clampedEnd
+    }
   };
 
   outputs.auditoria.textContent = buildCotaAudit(auditData);
@@ -1328,12 +1411,25 @@ const calculateVaeba = () => {
     errors.push('Competência final INPC inválida.');
   }
 
-  const inpcBase = competenciaBase
-    ? getInpcIndex(competenciaBase.key, warnings, { allowFallback: false, label: 'base' })
+  const inpcBaseInfo = competenciaBase
+    ? getInpcIndex(competenciaBase.key, { allowFallback: false })
     : null;
-  const inpcFinal = competenciaFinal
-    ? getInpcIndex(competenciaFinal.key, warnings, { allowFallback: true, label: 'final' })
+  const inpcFinalInfo = competenciaFinal
+    ? getInpcIndex(competenciaFinal.key, { allowFallback: true })
     : null;
+  if (competenciaBase && !inpcBaseInfo?.index) {
+    warnings.push(`Competência base ${competenciaBase.key} não encontrada na série INPC.`);
+  }
+  if (competenciaFinal && !inpcFinalInfo?.index) {
+    warnings.push(`Competência final ${competenciaFinal.key} não encontrada na série INPC.`);
+  }
+  if (inpcFinalInfo?.clampedEnd && competenciaFinal) {
+    warnings.push(
+      `Competência final ${competenciaFinal.key} fora da série. Usado INPC mais recente (${INPC_MAX_KEY}).`
+    );
+  }
+  const inpcBase = inpcBaseInfo?.index ?? null;
+  const inpcFinal = inpcFinalInfo?.index ?? null;
 
   let fatcor = 0;
   if (inpcBase && inpcFinal) {
