@@ -154,6 +154,15 @@ const parseMoneyPtBR = (value) => {
   return Number.isNaN(parsed) ? null : parsed;
 };
 
+const normalizeWarnings = (warnings) => {
+  const nonInpc = warnings.filter((warning) => !/INPC/i.test(warning));
+  const hadInpc = warnings.some((warning) => /INPC/i.test(warning));
+  if (hadInpc) {
+    nonInpc.push(INPC_GENERIC_WARNING);
+  }
+  return Array.from(new Set(nonInpc));
+};
+
 const formatCurrencyInput = (raw) => {
   const digits = raw.replace(/\D/g, '').padStart(3, '0');
   const integerPart = digits.slice(0, -2).replace(/^0+(?=\d)/, '') || '0';
@@ -856,7 +865,8 @@ const calculateCota = () => {
       ...metrics
     };
   });
-  renderAlerts(warnings.slice(0, 1));
+  const sanitizedWarnings = normalizeWarnings(warnings);
+  renderAlerts(sanitizedWarnings.slice(0, 1));
 
   const totalNominal = computedEntries.reduce((sum, entry) => sum + entry.conversion.brl, 0);
   const totalCorrigido = computedEntries.reduce((sum, entry) => sum + entry.corrected, 0);
@@ -899,7 +909,7 @@ const calculateCota = () => {
     totalCapitalizado,
     totalByType,
     entries: computedEntries,
-    warnings,
+    warnings: sanitizedWarnings,
     competenciasProcessadas: computedEntries.length,
     beneficioEquivalente,
     inpcPolicy: {
@@ -1526,7 +1536,8 @@ const calculateVaeba = () => {
   outputs.vaebaBruta.textContent = formatCurrency.format(vaebaBruta);
   outputs.vaebaAjustada.textContent = formatCurrency.format(vaebaAjustada);
 
-  renderAlerts([...errors, ...warnings]);
+  const sanitizedWarnings = normalizeWarnings(warnings);
+  renderAlerts([...errors, ...sanitizedWarnings]);
   if (errors.length) {
     outputs.auditoria.textContent = 'Corrija os erros indicados para calcular.';
     outputs.parecer.textContent = 'Corrija os erros indicados para calcular.';
@@ -1555,7 +1566,7 @@ const calculateVaeba = () => {
     supAjustado,
     vaebaBruta,
     vaebaAjustada,
-    warnings
+    warnings: sanitizedWarnings
   };
 
   outputs.auditoria.textContent = buildAudit(auditData);
@@ -2096,6 +2107,7 @@ const handleApplyPdf = () => {
   cotaEntries = lastParsedPdf.entries;
   renderCotaTable(inputs.dataCalculo.value);
   updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
+ codex/corrigir-leitura-da-calculadora-h7bkpl
 };
 
 const handleApplyPdf = () => {
@@ -2106,6 +2118,7 @@ const handleApplyPdf = () => {
   cotaEntries = lastParsedPdf.entries;
   renderCotaTable(inputs.dataCalculo.value);
   updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
+ codex/add-cota-calculation-option-to-calculator
 };
 
 const handleManualParse = () => {
