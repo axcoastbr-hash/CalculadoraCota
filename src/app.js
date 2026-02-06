@@ -916,6 +916,7 @@ const parsePdfContributions = async (file) => {
   const data = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   const entries = [];
+  const moneyPattern = /\d{1,3}(?:\.\d{3})*,\d{2}/;
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
@@ -923,6 +924,8 @@ const parsePdfContributions = async (file) => {
     const lines = groupTextItemsByLine(textContent.items);
     const monthMap = detectMonthColumns(lines);
     if (!monthMap) continue;
+    const monthPositions = Object.values(monthMap);
+    const minMonthX = Math.min(...monthPositions);
 
     lines.forEach((line) => {
       const lineText = line.items.map((item) => item.text).join(' ');
@@ -933,7 +936,8 @@ const parsePdfContributions = async (file) => {
       const type = inferLineType(lineText);
 
       line.items.forEach((item) => {
-        if (!/[\d.,]/.test(item.text)) return;
+        if (!moneyPattern.test(item.text)) return;
+        if (item.x < minMonthX - 2) return;
         const value = parseBrazilianNumber(item.text);
         if (!value) return;
         const month = mapItemToMonth(item.x, monthMap);
