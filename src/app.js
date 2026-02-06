@@ -1083,6 +1083,7 @@ const mapLineItemsToColumns = (items, columns, maxDx) => {
         raw: text,
         value: parseMoneyPtBR(text)
       };
+ codex/corrigir-leitura-da-calculadora-nit5m2
     }
   });
   return bestByColumn;
@@ -1176,6 +1177,101 @@ const consolidateRows = (rows) => {
       byYear.set(row.year, row);
     }
   });
+
+    }
+  });
+  return bestByColumn;
+};
+
+const extractRowsFromLines = ({ lines, headerLine, columns, maxDx }) => {
+  const yearPattern = /^(19|20)\d{2}$/;
+  const headerIndex = lines.indexOf(headerLine);
+  if (headerIndex < 0) return [];
+  const rows = [];
+  let currentRow = null;
+  const stats = {
+    discarded: 0,
+    outsideWindow: 0,
+    nonYear: 0,
+    incomplete: 0,
+    years: []
+  };
+
+  for (let i = headerIndex + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    const normalizedText = normalizeHeaderText(line.text);
+    if (TABLE_END_TOKENS.some((token) => normalizedText.includes(token))) {
+      break;
+    }
+    if (FOOTER_BLOCKLIST.some((token) => normalizedText.includes(token))) {
+      stats.discarded += 1;
+      continue;
+    }
+    const leftmost = line.items[0];
+    const yearMatch = leftmost?.text?.match(yearPattern);
+    if (yearMatch) {
+      if (currentRow) rows.push(currentRow);
+      currentRow = {
+        year: Number(yearMatch[0]),
+        items: [...line.items],
+        lineText: line.text
+      };
+      stats.years.push(Number(yearMatch[0]));
+      continue;
+    }
+    if (currentRow) {
+      currentRow.items.push(...line.items);
+      currentRow.lineText = `${currentRow.lineText} ${line.text}`.trim();
+    } else {
+      stats.nonYear += 1;
+    }
+  }
+  if (currentRow) rows.push(currentRow);
+
+  const formatted = rows
+    .map((row) => {
+      const normalizedText = normalizeHeaderText(row.lineText);
+      if (FOOTER_BLOCKLIST.some((token) => normalizedText.includes(token))) return null;
+      const bestByColumn = mapLineItemsToColumns(row.items, columns, maxDx);
+      const months = {};
+      const raw = {};
+      ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13'].forEach(
+        (key) => {
+          const entry = bestByColumn[key];
+          months[key] = entry?.value ?? null;
+          raw[key] = entry?.raw ?? null;
+        }
+      );
+      const filled = Object.values(months).filter((value) => value !== null).length;
+      if (filled < 13) {
+        stats.incomplete += 1;
+      }
+      return {
+        year: row.year,
+        months,
+        raw,
+        confidence: { filled, missing: 13 - filled },
+        lineText: row.lineText
+      };
+    })
+    .filter(Boolean);
+
+  if (PDF_PARSE_DEBUG) {
+    console.info('[PDF] Linhas não iniciadas por ano:', stats.nonYear);
+    console.info('[PDF] Linhas incompletas:', stats.incomplete);
+  }
+  return { rows: formatted, stats };
+};
+
+const consolidateRows = (rows) => {
+  const byYear = new Map();
+  rows.forEach((row) => {
+    const existing = byYear.get(row.year);
+    if (!existing || row.confidence.filled > existing.confidence.filled) {
+      byYear.set(row.year, row);
+    }
+  });
+ codex/add-cota-calculation-option-to-calculator
   return Array.from(byYear.values()).sort((a, b) => a.year - b.year);
 };
 
@@ -2107,6 +2203,18 @@ const handleApplyPdf = () => {
   cotaEntries = lastParsedPdf.entries;
   renderCotaTable(inputs.dataCalculo.value);
   updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
+ codex/corrigir-leitura-da-calculadora-h7bkpl
+};
+
+const handleApplyPdf = () => {
+  if (!lastParsedPdf || !lastParsedPdf.entries.length) {
+    updateCotaStatus('Nenhuma leitura validada para aplicar.');
+    return;
+  }
+  cotaEntries = lastParsedPdf.entries;
+  renderCotaTable(inputs.dataCalculo.value);
+  updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
+ codex/add-cota-calculation-option-to-calculator
 };
 
 const handleManualParse = () => {
