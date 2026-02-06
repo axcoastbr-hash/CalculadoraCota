@@ -12,6 +12,8 @@ const COTA_REAL_RATE = 0.0444;
 const NSUA = 13;
 const FCB = 0.9818;
 const OMEGA = 115;
+const INPC_GENERIC_WARNING =
+  'Competências fora do intervalo do INPC disponível são ajustadas automaticamente pelo sistema.';
 const INPC_KEYS = Object.keys(INPC_INDEX).sort();
 const INPC_MIN_KEY = INPC_KEYS[0];
 const INPC_MAX_KEY = INPC_KEYS[INPC_KEYS.length - 1];
@@ -837,12 +839,10 @@ const calculateCota = () => {
 
   const pre1994Count = entries.filter((entry) => entry.competence < INPC_MIN_KEY).length;
   const postSeriesCount = entries.filter((entry) => entry.competence > INPC_MAX_KEY).length;
+  const inpcAdjusted = pre1994Count > 0 || postSeriesCount > 0 || inpcFinalInfo.clampedEnd || !inpcFinalIndex;
 
-  if (pre1994Count || postSeriesCount || inpcFinalInfo.clampedEnd || !inpcFinalIndex) {
-    warnings.push(
-      `INPC aplicado com regras de ancoragem/clamp: faixa ${INPC_MIN_KEY}..${INPC_MAX_KEY}. ` +
-        'Verifique a política consolidada na auditoria.'
-    );
+  if (inpcAdjusted) {
+    warnings.push(INPC_GENERIC_WARNING);
   }
 
   const computedEntries = entries.map((entry) => {
@@ -1465,16 +1465,10 @@ const calculateVaeba = () => {
   const inpcFinalInfo = competenciaFinal
     ? getInpcIndex(competenciaFinal.key, { allowFallback: true })
     : null;
-  if (competenciaBase && !inpcBaseInfo?.index) {
-    warnings.push(`Competência base ${competenciaBase.key} não encontrada na série INPC.`);
-  }
-  if (competenciaFinal && !inpcFinalInfo?.index) {
-    warnings.push(`Competência final ${competenciaFinal.key} não encontrada na série INPC.`);
-  }
-  if (inpcFinalInfo?.clampedEnd && competenciaFinal) {
-    warnings.push(
-      `Competência final ${competenciaFinal.key} fora da série. Usado INPC mais recente (${INPC_MAX_KEY}).`
-    );
+  const inpcAdjusted =
+    !inpcBaseInfo?.index || !inpcFinalInfo?.index || Boolean(inpcFinalInfo?.clampedEnd);
+  if (inpcAdjusted) {
+    warnings.push(INPC_GENERIC_WARNING);
   }
   const inpcBase = inpcBaseInfo?.index ?? null;
   const inpcFinal = inpcFinalInfo?.index ?? null;
@@ -2092,6 +2086,16 @@ const handleValidatePdf = async () => {
     updateCotaStatus('Falha ao validar o PDF. Tente novamente ou use o modo assistido.');
     cotaPdfPreview.innerHTML = 'Nenhuma leitura validada.';
   }
+};
+
+const handleApplyPdf = () => {
+  if (!lastParsedPdf || !lastParsedPdf.entries.length) {
+    updateCotaStatus('Nenhuma leitura validada para aplicar.');
+    return;
+  }
+  cotaEntries = lastParsedPdf.entries;
+  renderCotaTable(inputs.dataCalculo.value);
+  updateCotaStatus(`Leitura aplicada: ${lastParsedPdf.entries.length} lançamentos na tabela.`);
 };
 
 const handleApplyPdf = () => {
